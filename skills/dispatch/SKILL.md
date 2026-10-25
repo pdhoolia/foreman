@@ -23,6 +23,9 @@ Argument: `$ARGUMENTS`, the task file (`docs/tracks/<slug>/tasks/<ID>-<name>.md`
    - The checkout path and the branch.
    - The rules: own only the paths the task file names, and follow "Branches and pull
      requests" in the plugin's README (defaults, stops, the PR's shape).
+   - The PR stays a draft until the ready gate lets it through: the ready gate hook
+     ("Hooks" in the README) refuses the ready mark until `scripts/check.sh` has passed
+     on the head and the task file proposes `done`. Do not repeat that rule in words.
    - Who to report to when done or blocked: this session.
 5. **Start the developer** with the `developer` agent (`foreman:developer`) or a new
    session, given the brief. Do not do the task's work yourself.

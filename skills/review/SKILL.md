@@ -27,4 +27,6 @@ change to recovery, contracts or shared state, run this as a separate session wi
 4. Send the findings to the developer, numbered, most serious first, each with what
    would fix it. A finding is a fact about the diff, not a taste.
 5. **Ready gate.** The PR may be marked ready only when no finding is left that blocks
-   it. Then put it in the owner's digest: one line on what to check. Run `refresh`.
+   it. The ready gate hook ("Hooks" in the README) also refuses the ready mark until
+   `scripts/check.sh` has passed on the head and the task file proposes `done`. Then put
+   it in the owner's digest: one line on what to check. The refresh hook refreshes after the ready mark; publish what it prints.
