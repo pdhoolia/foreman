@@ -1,0 +1,8 @@
+{
+  "name": "foreman",
+  "description": "The foreman plugin, installable from this repository.",
+  "owner": {"name": "foreman maintainers"},
+  "plugins": [
+    {"name": "foreman", "source": "./", "description": "Plans, tasks, parallel sessions and a control room for the owner."}
+  ]
+}
