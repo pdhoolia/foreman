@@ -121,7 +121,10 @@ def scratch_project(d: Path) -> Path:
     bin_dir = d / 'bin'
     bin_dir.mkdir()
     (d / 'prs.json').write_text(json.dumps(PRS), encoding='utf-8')
-    (bin_dir / 'gh').write_text(f'#!/bin/sh\ncat "{d / "prs.json"}"\n', encoding='utf-8')
+    # What `gh api --paginate ... --jq` prints: one object per line. With gh-fails present,
+    # it answers as gh does where GraphQL is blocked or the network is down.
+    (d / 'prs.jsonl').write_text(''.join(json.dumps(p) + '\n' for p in PRS), encoding='utf-8')
+    (bin_dir / 'gh').write_text(f'#!/bin/sh\n[ -f "{d / "gh-fails"}" ] && {{ echo "HTTP 403" >&2; exit 1; }}\ncat "{d / "prs.jsonl"}"\n', encoding='utf-8')
     (bin_dir / 'gh').chmod(0o755)
     return proj
 
@@ -143,13 +146,18 @@ class ScratchProjectTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def refresh(self, *own):
-        r = run(['bash', str(REFRESH), str(self.out), *(own or ['--all'])], self.proj, self.d)
+    def refresh(self, *args):
+        r = run(['bash', str(REFRESH), str(self.out), *args], self.proj, self.d)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout, json.loads((self.out / 'state.json').read_text(encoding='utf-8'))
 
+    def refused(self, *args):
+        r = run(['bash', str(REFRESH), str(self.out), *args], self.proj, self.d)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        return r.stderr
+
     def test_refresh_end_to_end(self):
-        printed, state = self.refresh()
+        printed, state = self.refresh('--all')
         self.assertIn('url:          https://example.com/room', printed)
         self.assertEqual([(l['key'], l['model'], l['tasks']) for l in state['lanes']], [('G', 'Model Z', ['task-G01', 'task-G02'])])
         tasks = {t['anchor']: t for t in state['tasks']}
@@ -173,20 +181,56 @@ class ScratchProjectTests(unittest.TestCase):
                 self.assertIn(line, tabs['lanes'])
             self.assertIn('id="rec-bed-shape"', tabs['records'])
 
-    def test_refresh_keeps_the_tracks_it_does_not_own(self):
-        _, state = self.refresh()
+    def published(self):
+        """A published state: this checkout's, with garden's G01 done and a compost track only another session has."""
+        _, state = self.refresh('--all')
+        next(t for t in state['tasks'] if t['anchor'] == 'task-G01')['state'] = 'done'
         state['tracks'].append({'slug': 'compost', 'title': 'Compost', 'path': 'docs/tracks/compost/plan.md', 'state': 'active',
-                                'updated': None, 'done': False, 'coordinator': '', 'done_when': '', 'budget': '', 'tasks': ['task-K01']})
-        state['tasks'].append(dict(state['tasks'][0], id='K01', anchor='task-K01', track='compost', depends_on=[], branch=None))
+                                'updated': None, 'done': False, 'coordinator': '', 'done_when': '', 'budget': '', 'tasks': ['task-K01', 'task-K02']})
+        k01 = dict(state['tasks'][0], id='K01', anchor='task-K01', track='compost', depends_on=[], deps=[], branch=None, plain='Turn waste into soil.')
+        k02 = dict(k01, id='K02', anchor='task-K02', deps=['task-K01'])
+        del k02['depends_on']  # as an older generator wrote it
+        state['tasks'] += [k01, k02]
+        state['plain_words'].append({'id': 'K01', 'anchor': 'task-K01', 'text': 'Turn waste into soil.'})
+        state['findings']['rows'].append({'variant': 'heap', 'kind': 'clustering', 'set': 'kitchen', 'ari': 0.4, 'params': {},
+                                          'file': 'docs/tracks/compost/evidence/r.json', 'track': 'compost'})
         (self.out / 'live-state.json').write_text(json.dumps(state), encoding='utf-8')
+
+    def test_refresh_merges_the_tracks_it_does_not_own(self):
+        self.published()
         _, merged = self.refresh('garden')
-        self.assertEqual({t['track'] for t in merged['tasks']}, {'garden', 'compost'})
-        (self.out / 'live-state.json').unlink()
-        r = run(['bash', str(REFRESH), str(self.out), 'garden'], self.proj, self.d)
-        self.assertNotEqual(r.returncode, 0)  # naming a track without the published state is refused
-        r = run(['bash', str(REFRESH), str(self.out)], self.proj, self.d)
-        self.assertNotEqual(r.returncode, 0)  # neither tracks nor --all: a replacement is never the default
-        self.assertIn('--all', r.stderr)
+        tasks = {t['anchor']: t for t in merged['tasks']}
+        self.assertEqual(tasks['task-G01']['state'], 'active')  # owned: from the checkout
+        self.assertEqual(tasks['task-K02']['deps'], ['task-K01'])  # kept: dependencies survive an older live file
+        self.assertEqual(tasks['task-K01']['plain'], 'Turn waste into soil.')
+        self.assertIn({'id': 'K01', 'anchor': 'task-K01', 'text': 'Turn waste into soil.'}, merged['plain_words'])
+        self.assertIn('A bed that knows its rows.', [p['text'] for p in merged['plain_words']])
+        self.assertEqual([r['variant'] for r in merged['findings']['rows']], ['heap'])
+
+    def test_refresh_without_tracks_owns_none(self):
+        self.published()
+        _, merged = self.refresh()  # the program session: pull requests, records and lanes only
+        tasks = {t['anchor']: t for t in merged['tasks']}
+        self.assertEqual(tasks['task-G01']['state'], 'done')  # kept as published, not reset from this checkout
+        self.assertIn('task-K01', tasks)
+        self.assertEqual([p['number'] for p in merged['prs']], [3, 4])
+
+    def test_refresh_refuses_what_would_become_a_replacement(self):
+        self.assertIn('live-state.json', self.refused('garden'))  # no published state saved
+        self.assertIn('live-state.json', self.refused())
+        self.assertIn('--all takes no track names', self.refused('garden', '--all'))
+        (self.out / 'live-state.json').write_text('{"format": "x"}', encoding='utf-8')
+        self.assertIn('not a published control-room-state/v1', self.refused('garden'))
+        self.published()
+        self.assertIn('no track bnch', self.refused('bnch'))
+
+    def test_refresh_goes_on_without_the_pull_request_list(self):
+        (self.d / 'gh-fails').write_text('', encoding='utf-8')
+        r = run(['bash', str(REFRESH), str(self.out), '--all'], self.proj, self.d)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('warning: no pull request list', r.stderr)
+        state = json.loads((self.out / 'state.json').read_text(encoding='utf-8'))
+        self.assertEqual((state['prs'], state['prs_included']), ([], False))
 
     def test_track_brief(self):
         (self.d / 'store.json').write_text(json.dumps(STORE), encoding='utf-8')
@@ -238,7 +282,7 @@ class ScratchProjectTests(unittest.TestCase):
         self.assertRegex(plan, r'- Updated: \d{4}-\d{2}-\d{2}\n')
         r = run([sys.executable, '-I', str(SCRIPT), 'brief', 'track', 'garden', '--root', '.'], self.proj, self.d)
         self.assertIn('## Next action\n- dispatch G02.', r.stdout)
-        _, state = self.refresh()
+        _, state = self.refresh('--all')
         self.assertNotEqual(state['tracks'][0]['updated'], '2026-02-01')
 
 

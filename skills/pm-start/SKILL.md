@@ -9,8 +9,9 @@ argument-hint: track <slug> | program
 Arguments: `$ARGUMENTS` (`track <slug>` or `program`). Run every command from the
 project's root. Keep scratch files in your scratchpad, never in the repository.
 
-1. Fetch the open pull requests:
-   `gh pr list --state open --limit 200 --json number,title,headRefName,isDraft,url,updatedAt > <scratch>/prs.json`
+1. Fetch the open pull requests (GitHub's REST API, which works where `gh pr list` is
+   refused): `bash "${CLAUDE_PLUGIN_ROOT}/scripts/open-prs.sh" > <scratch>/prs.json`.
+   If it fails, leave `--prs` out below; the brief then says the list was not read.
 2. Read the control room's store. The artifact is `control_room_url` in `foreman.json`.
    With the ArtifactData tool, list the `questions` and the `answers` collections and
    write them to `<scratch>/store.json` as

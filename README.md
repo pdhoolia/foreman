@@ -40,6 +40,9 @@ The skills are then named `/foreman:<skill>`, for example `/foreman:pm-start`.
 4. Publish the control room (see "The control room").
 
 The tools need `python3`, `git` and `gh` (signed in to the project's GitHub account).
+They call GitHub's REST API through `gh api` (`scripts/open-prs.sh`), which works where
+gh's GraphQL calls such as `gh pr list` are refused. Without `gh`, a refresh still runs
+and warns that it has no pull request list.
 The page's tests also use `node` when it is installed.
 
 ### foreman.json
@@ -105,6 +108,7 @@ The bullets before the first `##` heading of a plan:
 - `- Budget:` developer sessions, review rounds, owner decisions, money or compute.
   A coordinator that would go over it asks the owner first.
 - `- Updated:` the date of the last change.
+- `- Owner:` who sets priorities and merges (the template has it; the tools do not read it).
 
 The page shows `Coordinator`, `Done when` and `Budget` on the track's lane.
 
@@ -120,7 +124,10 @@ critical path.
 
 - `- State:` `planned`, `active`, `blocked`, `review`, `done` or `dropped`. The first
   word counts.
+- `- Track:` a link to the track's plan.
 - `- Issue / PR:` a link, or "not created".
+- `- Owner / run label:` who runs the task: the model, the effort and where it runs, or
+  "unassigned".
 - `- Branch:` the first code span is the branch, for example `` `alice/list-model` ``.
 - `- Updated:` the date.
 - `- Needs owner:` optional. Puts a note under the page's Needs you tab.
@@ -137,9 +144,16 @@ A task is `done` only when its PR is merged. On a branch, `done` is a proposal.
 - One PR per task, against `main`, opened as a draft and marked ready only when the
   project's checks pass. The body says the problem, what changes, how it was tested
   (every check that ran, and any that could not), and what is not done.
+- The same PR fills the task file's Evidence and Handoff sections and proposes its
+  `State: done`.
+- Run the project's checks before every push. A check that cannot run is named in the
+  PR, never counted as a pass.
 - A developer takes the recommended default on a small question and marks it in the
   PR as "default taken, owner may overrule". It stops for a scope change, a privacy
   risk or anything outward-facing.
+- No agent co-author line, no "generated with" footer and no link to an agent's session
+  in any commit, PR or comment. After writing a PR or a comment, read it back and remove
+  any such line a platform added.
 
 ### Plain words
 
@@ -208,7 +222,7 @@ What cannot come from git lives in the page's store:
 | --- | --- | --- |
 | `questions/<id>` | the coordinator | `{order, task, title, body, options: [{id, label, detail}], recommended, why}` |
 | `answers/<id>` | the page, when the owner saves | `{choice, note, updated}` |
-| `events/pr-<n>` | a pull request watcher | `{number, title, url, state: open\|ready\|merged, updated}` |
+| `events/pr-<n>` | a pull request watcher | `{number, title, url, state: open\|ready\|merged\|closed, updated}` |
 | `labels/<item id>` | the page, when the owner labels an item | `{goal, said?, updated}` |
 
 A pull request event newer than the state file wins over it; an older one is ignored.
@@ -232,7 +246,8 @@ python3 scripts/control_room.py event pr <number> <open|ready|merged|closed> [--
    and `icon` `dashboard`. The first publish needs all three: `db` holds the store,
    `sample` runs the Review tab's assistant, and `user` is declared with them.
 3. Put the returned link in `foreman.json` as `control_room_url` and commit it.
-4. Write the open decision cards into the store as `questions/<id>`.
+4. Write the open decision cards into the store as `questions/<id>`, each built with
+   `control_room.py card` as the `inputs` skill says.
 5. **Every later publish:** run `refresh` and publish what it prints, with `url` set
    and without `capabilities`. The artifact keeps the ones it has.
 
@@ -240,13 +255,26 @@ python3 scripts/control_room.py event pr <number> <open|ready|merged|closed> [--
 
 Each coordinator works from its own branch, so a state file made from one checkout
 does not see another coordinator's unmerged changes. So a publish is a merge, not a
-replacement. Each track's entries in `state.json` (its plan and its tasks) are that
-track's manifest. `refresh <slug> ...` first saves the published `state.json`, takes the
-named tracks from the checkout, and keeps every other track's manifest as published.
-`refresh --all` takes every track from the checkout: for the first publish, or a
-program session working from `main`. Refresh refuses to run with neither. When two
-coordinators publish at the same moment, the artifact service refuses the later
-publish as stale; that coordinator reads the published state again and repeats.
+replacement. Each track's entries in `state.json` (its plan, its tasks, its findings
+rows and its plain-words lines) are that track's manifest. Every refresh first saves
+the published `state.json`, then:
+
+- `refresh <slug> ...` (a track coordinator) takes the named tracks from the checkout
+  and keeps every other track as published.
+- `refresh` with no track (the program session, after a merge) owns none: it keeps
+  every track as published and takes only the pull requests, the records and the lanes
+  from the checkout.
+- `refresh --all` takes every track from the checkout. It is only for the first
+  publish, and for recovering a published state that is broken.
+
+A track only in the checkout is added, since it replaces nothing. The refresh refuses a
+saved state that is not a `control-room-state/v1` file with tracks, and a track name
+with no folder under `docs/tracks/`.
+
+Records (`docs/inputs/`) and lanes (`foreman.json`) are written by the program session
+on `main`. So a coordinator merges `origin/main` into its branch before it refreshes.
+When two sessions publish at the same moment, the artifact service refuses the later
+publish as stale; that session saves the published state again and repeats.
 
 ### Privacy
 
@@ -266,7 +294,7 @@ a later version.
 .claude-plugin/   plugin.json, marketplace.json
 skills/           the six skills
 agents/           developer, reviewer, scribe
-scripts/          control_room.py, store-schema.json, control-room/ (the page), control-room-refresh.sh, rebase-open-prs.sh
+scripts/          control_room.py, store-schema.json, control-room/ (the page), control-room-refresh.sh, open-prs.sh, rebase-open-prs.sh
 templates/        plan, task, record, sample review spec, program, sdlc
 hooks/            hooks.json
 tests/            the generator's and the page's tests on invented fixtures

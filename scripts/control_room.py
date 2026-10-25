@@ -2,7 +2,7 @@
 """The control room: one private artifact for the owner, fed by files generated from the repo.
 
     python3 control_room.py state   --out state.json [--prs prs.json] [--root DIR]
-                                    [--live live-state.json --own SLUG ...]
+                                    [--live live-state.json [--own SLUG ...]]
     python3 control_room.py review  --spec spec.json --out review.json
     python3 control_room.py page    --out index.html [--title NAME] [--root DIR]
     python3 control_room.py brief   track SLUG | program [--prs prs.json] [--store store.json] [--root DIR]
@@ -14,9 +14,10 @@
 `state` reads the consuming project (foreman.json, track plans, task files, plain words,
 bench evidence, decision records under docs/inputs/) and writes one JSON file. `--prs`
 takes the output of `gh pr list --state open --json number,title,headRefName,isDraft,url,updatedAt`.
-`--live` with `--own` keeps every track the running session does not own as the
-published state.json has it, so a coordinator working from an unmerged branch does not
-undo another coordinator's publish. `review` turns a review spec (items for the owner to
+`--live` keeps every track the running session does not own (`--own`; none when it is
+left out) as the published state.json has it, so a coordinator working from an unmerged
+branch does not undo another coordinator's publish. Without `--live`, every track comes
+from the checkout: only for a first publish or a recovery. `review` turns a review spec (items for the owner to
 label) into review.json. `page` writes the static page from control-room/; it embeds no
 data and loads state.json and review.json with fetch() from beside itself. It rewrites
 the file only when the page source changed. `brief` prints a session's starting brief;
@@ -268,9 +269,14 @@ def number(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
-def read_findings(root: Path, tracks: list[dict]) -> dict:
+def read_findings(root: Path, tracks: list[dict], live: dict) -> dict:
+    """Rows and reading lines from each track's evidence; a kept track's come from the published `live` findings."""
     rows, readings = [], []
     for tr in tracks:
+        if tr.get("kept"):
+            rows += [dict(r) for r in live.get("rows") or [] if r.get("track") == tr["slug"]]
+            readings += [r for r in live.get("readings") or [] if r.get("plan") == tr["path"]]
+            continue
         evidence = root / "docs/tracks" / tr["slug"] / "evidence"
         found = False
         for f in sorted(evidence.glob("*.json")):
@@ -390,15 +396,30 @@ RAW_TRACK = ("slug", "title", "path", "state", "updated", "done", "coordinator",
 
 
 def keep_live(tracks: list[dict], live: dict, own: set[str]) -> list[dict]:
-    """Every track the session does not own, as the published state has it; the owned ones from the files."""
+    """Every track the session does not own, as the published state has it; the owned ones from the files.
+
+    A track only in the checkout is added: it replaces nothing that was published."""
+    if not isinstance(live, dict) or live.get("format") != "control-room-state/v1" or not live.get("tracks"):
+        raise SystemExit("the live state is not a published control-room-state/v1 file with tracks: "
+                         "read the published state.json again, or pass --all to publish every track from this checkout")
+    unknown = sorted(own - {tr["slug"] for tr in tracks})
+    if unknown:
+        raise SystemExit(f"no track {', '.join(unknown)} under docs/tracks/")
     by_anchor = {t["anchor"]: t for t in live.get("tasks") or []}
+    lines = {p["anchor"]: p["text"] for p in live.get("plain_words") or []}
     kept = {}
-    for tr in live.get("tracks") or []:
+    for tr in live["tracks"]:
         if tr["slug"] in own:
             continue
-        kept[tr["slug"]] = {k: tr.get(k) for k in RAW_TRACK} | {
-            "tasks": [{k: by_anchor[a].get(k) for k in RAW_TASK} | {"depends_on": by_anchor[a].get("depends_on") or [],
-                      "live_plain": by_anchor[a].get("plain")} for a in tr.get("tasks") or [] if a in by_anchor]}
+        tasks = []
+        for a in tr.get("tasks") or []:
+            t = by_anchor.get(a)
+            if not t:
+                continue
+            # A state file from an older generator has no depends_on; its resolved deps say the same.
+            deps = t["depends_on"] if "depends_on" in t else [by_anchor[d]["id"] for d in t.get("deps") or [] if d in by_anchor]
+            tasks.append({k: t.get(k) for k in RAW_TASK} | {"depends_on": deps, "live_plain": t.get("plain"), "live_line": lines.get(a)})
+        kept[tr["slug"]] = {k: tr.get(k) for k in RAW_TRACK} | {"tasks": tasks, "kept": True}
     out = [kept.pop(tr["slug"], tr) for tr in tracks]
     return sorted(out + list(kept.values()), key=lambda tr: tr["slug"])
 
@@ -414,6 +435,7 @@ def collect(root: Path, prs: list[dict] | None = None, now: dt.datetime | None =
     plain = read_plain_words(root, "task")
     lane_keys = {l["key"] for l in lanes}
     tasks = [t for tr in tracks for t in tr["tasks"]]
+    lines: dict[str, str | None] = {}
 
     # Anchors: `task-<id>`; when an ID repeats across tracks, the task in an active track
     # keeps the short form and the others get `task-<track>-<id>`.
@@ -431,7 +453,9 @@ def collect(root: Path, prs: list[dict] | None = None, now: dt.datetime | None =
         same_track = {o["id"]: o["anchor"] for o in tasks if o["track"] == t["track"]}
         unique = {o["id"]: o["anchor"] for o in tasks if seen[o["id"]] == 1}
         t["deps"] = [same_track.get(d) or unique.get(d) for d in t["depends_on"] if same_track.get(d) or unique.get(d)]
-        t["plain"] = plain.get(t["id"]) or t.pop("live_plain", None) or t["deliverable"]
+        # A kept task keeps its published words; the others take this checkout's plain words.
+        lines[t["anchor"]] = t.pop("live_line") if "live_line" in t else plain.get(t["id"])
+        t["plain"] = (t.pop("live_plain") if "live_plain" in t else plain.get(t["id"])) or t["deliverable"]
         prefix = re.match(r"[A-Z]+", t["id"])
         t["lane"] = None
         if prefix and t["track"] not in done_slugs:
@@ -477,9 +501,9 @@ def collect(root: Path, prs: list[dict] | None = None, now: dt.datetime | None =
         "critical_path": path,
         "needs": needs,
         "prs": pr_list,
-        "findings": read_findings(root, tracks),
+        "findings": read_findings(root, tracks, (live or {}).get("findings") or {}),
         "records": read_records(root),
-        "plain_words": [{"id": t["id"], "anchor": t["anchor"], "text": plain[t["id"]]} for t in tasks if t["id"] in plain and t["track"] not in done_slugs],
+        "plain_words": [{"id": t["id"], "anchor": t["anchor"], "text": lines[t["anchor"]]} for t in tasks if lines[t["anchor"]] and t["track"] not in done_slugs],
         "counts": {
             "tasks": len(active_tasks),
             "active": sum(t["state"] == "active" for t in active_tasks),
@@ -703,8 +727,8 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--root", default=".")
     s.add_argument("--out", required=True)
     s.add_argument("--prs", help="JSON from gh pr list")
-    s.add_argument("--live", help="the published state.json; keeps the tracks not named by --own")
-    s.add_argument("--own", nargs="+", default=[], help="the track slugs this session owns")
+    s.add_argument("--live", help="the published state.json; keeps every track not named by --own")
+    s.add_argument("--own", nargs="+", default=[], help="the track slugs this session owns; none when left out")
     r = sub.add_parser("review", help="write review.json from a review spec")
     r.add_argument("--spec", required=True)
     r.add_argument("--out", required=True)
@@ -728,7 +752,7 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--body", required=True)
     c.add_argument("--option", nargs="+", action="append", required=True, metavar="ID LABEL [DETAIL]")
     c.add_argument("--task")
-    c.add_argument("--order", type=float)
+    c.add_argument("--order", type=int)
     c.add_argument("--recommended", help="the id of the option the coordinator would pick")
     c.add_argument("--why")
     e = sub.add_parser("event", help="print a pull request event for the store: events/pr-<n>")

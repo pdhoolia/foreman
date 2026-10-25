@@ -255,7 +255,7 @@ class PageTests(unittest.TestCase):
             self.assertEqual(json.loads(r.stdout)['changed'], False)
 
     def test_scripts_parse(self):
-        for name in ('control-room-refresh.sh', 'rebase-open-prs.sh'):
+        for name in ('control-room-refresh.sh', 'open-prs.sh', 'rebase-open-prs.sh'):
             r = subprocess.run(['bash', '-n', str(ROOT / 'scripts' / name)], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
 

@@ -11,17 +11,23 @@
 set -euo pipefail
 dry=0
 for a in "$@"; do case "$a" in --dry-run) dry=1 ;; *) echo "unknown flag $a" >&2; exit 1 ;; esac; done
+here="$(cd "$(dirname "$0")" && pwd)"
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
+# The list comes first: without it there is nothing to rebase, so a failed call stops here.
+prs="$(bash "$here/open-prs.sh" | python3 -c 'import json, sys; [print(p["number"], p["headRefName"], sep="\t") for p in json.load(sys.stdin)]')"
 git fetch -q --prune origin
 conflicts=0; rebased=0; clean=0
-while IFS=$'\t' read -r number branch mergeable; do
+while IFS=$'\t' read -r number branch; do
   [ -n "$number" ] || continue
+  # Named refspecs, so a single-branch or shallow clone sees the PR's branch too.
+  git fetch -q origin "+refs/heads/main:refs/remotes/origin/main" "+refs/heads/$branch:refs/remotes/origin/$branch"
   behind=$(git rev-list --count "origin/$branch..origin/main" 2>/dev/null || echo "?")
-  if [ "$mergeable" = "MERGEABLE" ] && [ "$behind" = "0" ]; then
+  # A branch that has every commit of main cannot conflict with it.
+  if [ "$behind" = "0" ]; then
     echo "#$number $branch: on main"; clean=$((clean+1)); continue
   fi
-  echo "#$number $branch: $mergeable, $behind commits behind main"
+  echo "#$number $branch: $behind commits behind main"
   [ "$dry" = "1" ] && continue
   wt="$(mktemp -d -t rebase-pr.XXXXXX)"
   git worktree add -q --detach "$wt" "origin/$branch"
@@ -33,6 +39,6 @@ while IFS=$'\t' read -r number branch mergeable; do
     git -C "$wt" rebase --abort >/dev/null 2>&1 || true
   fi
   git worktree remove --force "$wt"
-done < <(gh pr list --state open --limit 200 --json number,headRefName,mergeable --jq '.[] | [.number, .headRefName, .mergeable] | @tsv')
+done <<< "$prs"
 echo "on main: $clean, rebased: $rebased, conflicts: $conflicts"
 [ "$conflicts" = "0" ] || exit 2

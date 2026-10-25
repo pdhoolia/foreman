@@ -1,35 +1,47 @@
 #!/usr/bin/env bash
 # Refresh the control room's files in one step, then print what the coordinator publishes.
-#   control-room-refresh.sh <out-dir> <own-track-slug ...> | --all
+#   control-room-refresh.sh <out-dir> [own-track-slug ...]
+#   control-room-refresh.sh <out-dir> --all
 # Run it from inside the project's checkout. Fetches the open pull requests, regenerates
 # <out-dir>/state.json and writes <out-dir>/index.html only when the page source changed.
-# The state is a merge, not a replacement: only the named tracks come from this checkout,
-# and every other track is kept as the published state has it. Save the published
-# state.json as <out-dir>/live-state.json first (the refresh skill says how). --all takes
-# every track from this checkout: for the first publish, or a program session on main. A review
-# round's <out-dir>/review.json is made separately (control_room.py review) and is
-# published once; a later publish that leaves it out keeps it. The control room's URL
-# comes from foreman.json (control_room_url) or CONTROL_ROOM_URL.
+# The state is a merge, not a replacement. Save the published state.json as
+# <out-dir>/live-state.json first (the refresh skill says how). Then only the named tracks
+# come from this checkout and every other track is kept as published. With no track
+# named, the session owns none: every published track is kept, and only the pull
+# requests, records and lanes come from here (the program session's refresh). --all
+# takes every track from this checkout: only for the first publish, or to recover a
+# broken published state. A review round's <out-dir>/review.json is made separately
+# (control_room.py review) and is published once; a later publish that leaves it out
+# keeps it. The control room's URL comes from foreman.json (control_room_url) or
+# CONTROL_ROOM_URL.
 set -euo pipefail
-usage="usage: control-room-refresh.sh <out-dir> <own-track-slug ...> | --all"
+usage="usage: control-room-refresh.sh <out-dir> [own-track-slug ...] | <out-dir> --all"
 out="${1:?$usage}"
 shift
-[ "$#" -gt 0 ] || { echo "$usage" >&2; exit 1; }
+all=0
+for a in "$@"; do [ "$a" = "--all" ] && all=1; done
+if [ "$all" = "1" ] && [ "$#" -gt 1 ]; then echo "--all takes no track names; $usage" >&2; exit 1; fi
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(git rev-parse --show-toplevel)"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 url="${CONTROL_ROOM_URL:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("control_room_url") or "")' "$root/foreman.json" 2>/dev/null || true)}"
 live=()
-if [ "$1" != "--all" ]; then
-  [ -f "$out/live-state.json" ] || { echo "save the published state.json as $out/live-state.json first" >&2; exit 1; }
-  live=(--live "$out/live-state.json" --own "$@")
+if [ "$all" = "0" ]; then
+  [ -f "$out/live-state.json" ] || { echo "save the published state.json as $out/live-state.json first, or pass --all for a first publish" >&2; exit 1; }
+  live=(--live "$out/live-state.json")
+  [ "$#" -eq 0 ] || live+=(--own "$@")
 fi
 prs="$(mktemp -t control-room-prs.XXXXXX)"
 trap 'rm -f "$prs"' EXIT
-# Run in the repository so gh picks its remote, and ask for more than the default 30.
-(cd "$root" && gh pr list --state open --limit 200 --json number,title,headRefName,isDraft,url,updatedAt) > "$prs"
-python3 "$here/control_room.py" state --root "$root" --prs "$prs" --out "$out/state.json" ${live[@]+"${live[@]}"}
+# The pull request list is worth having, not worth stopping for.
+pr_args=()
+if (cd "$root" && bash "$here/open-prs.sh") > "$prs"; then
+  pr_args=(--prs "$prs")
+else
+  echo "warning: no pull request list (gh missing or the call failed); the page keeps only live pull request events" >&2
+fi
+python3 "$here/control_room.py" state --root "$root" --out "$out/state.json" ${pr_args[@]+"${pr_args[@]}"} ${live[@]+"${live[@]}"}
 python3 "$here/control_room.py" page --root "$root" --out "$out/index.html"
 
 files="{\"state.json\": \"$out/state.json\""
