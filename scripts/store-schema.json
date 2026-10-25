@@ -1,0 +1,45 @@
+{
+  "about": "The documents the control room page reads from its store. A field not listed here is refused, and so is a document that lacks a required field. control_room.py card and control_room.py event build them; never type one by hand.",
+  "questions": {
+    "id": "^[A-Za-z0-9_.~-]{1,120}$",
+    "written_by": "the coordinator (control_room.py card)",
+    "fields": {
+      "order": {"type": "number"},
+      "task": {"type": "string"},
+      "title": {"type": "string", "required": true},
+      "body": {"type": "string", "required": true},
+      "options": {"type": "options", "required": true},
+      "recommended": {"type": "option-id"},
+      "why": {"type": "string"}
+    }
+  },
+  "answers": {
+    "id": "^[A-Za-z0-9_.~-]{1,120}$",
+    "written_by": "the page, when the owner saves a decision",
+    "fields": {
+      "choice": {"type": "string", "required": true},
+      "note": {"type": "string"},
+      "updated": {"type": "time", "required": true}
+    }
+  },
+  "labels": {
+    "id": "^[A-Za-z0-9_.~-]{1,120}$",
+    "written_by": "the page, when the owner labels a review item",
+    "fields": {
+      "goal": {"type": "string", "required": true},
+      "said": {"type": "string"},
+      "updated": {"type": "time", "required": true}
+    }
+  },
+  "events": {
+    "id": "^pr-[1-9][0-9]*$",
+    "written_by": "a pull request watcher (control_room.py event pr)",
+    "fields": {
+      "number": {"type": "integer", "required": true},
+      "title": {"type": "string"},
+      "url": {"type": "https"},
+      "state": {"type": "string", "enum": ["open", "ready", "merged", "closed"], "required": true},
+      "updated": {"type": "time", "required": true}
+    }
+  }
+}

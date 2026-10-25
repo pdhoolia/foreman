@@ -167,6 +167,60 @@ class ReviewTests(unittest.TestCase):
             cr.review({'rows': []})
 
 
+class StoreDocumentTests(unittest.TestCase):
+    """Store documents are built by the script and checked against scripts/store-schema.json."""
+
+    def cli(self, *a):
+        return subprocess.run([sys.executable, '-I', str(SCRIPT), *a], capture_output=True, text=True)
+
+    def test_event_pr_prints_the_documented_shape(self):
+        r = self.cli('event', 'pr', '12', 'merged', '--title', 'Add the list model',
+                     '--url', 'https://github.com/example/pantry-notes/pull/12', '--updated', '2026-01-03T13:00:00Z')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout), {'collection': 'events', 'doc_id': 'pr-12', 'data': {
+            'number': 12, 'state': 'merged', 'updated': '2026-01-03T13:00:00Z', 'title': 'Add the list model',
+            'url': 'https://github.com/example/pantry-notes/pull/12'}})
+
+    def test_event_pr_refuses_wrong_field_names_and_values(self):
+        r = self.cli('event', 'pr', '12', 'merged', '--at', '2026-01-03T13:00:00Z')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('unrecognized arguments: --at', r.stderr)
+        r = self.cli('event', 'pr', '12', 'gone')
+        self.assertIn("invalid choice: 'gone'", r.stderr)
+        r = self.cli('event', 'pr', '12', 'ready', '--updated', 'yesterday')
+        self.assertIn("field 'updated' must be time", r.stderr)
+        # The hand-typed document that once showed merged PRs as open drafts.
+        with self.assertRaises(SystemExit) as e:
+            cr.check_doc('events', 'pr-12', {'number': 12, 'kind': 'merged', 'at': '2026-01-03T13:00:00Z'})
+        for words in ("unknown field 'kind'", "unknown field 'at'", "missing field 'state'", "missing field 'updated'"):
+            self.assertIn(words, str(e.exception))
+        with self.assertRaises(SystemExit):
+            cr.check_doc('events', 'pr-13', {'number': 12, 'state': 'open', 'updated': '2026-01-03T13:00:00Z'})
+
+    def test_card_builds_a_question_the_page_renders(self):
+        r = self.cli('card', '--id', 'search-scope', '--task', 'A01', '--order', '1', '--title', 'Should search also look inside the steps?',
+                     '--body', 'Today search reads titles and ingredients.', '--option', 'titles', 'Titles and ingredients only', 'Fast and precise.',
+                     '--option', 'steps', 'Steps too', 'Finds more, with more noise.', '--recommended', 'titles', '--why', 'Most searches name a dish.')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual((doc['collection'], doc['doc_id']), ('questions', 'search-scope'))
+        self.assertEqual(doc['data']['options'], [{'id': 'titles', 'label': 'Titles and ingredients only', 'detail': 'Fast and precise.'},
+                                                  {'id': 'steps', 'label': 'Steps too', 'detail': 'Finds more, with more noise.'}])
+        fixture = json.loads((FIXTURE / 'store.json').read_text(encoding='utf-8'))
+        self.assertEqual({k: v for k, v in doc['data'].items() if k != 'body' and k != 'why'},
+                         {k: v for k, v in fixture['questions'][0].items() if k not in ('id', 'body', 'why')})
+        r = self.cli('card', '--id', 'bad id', '--title', 'T', '--body', 'B', '--option', 'a', 'A', '--recommended', 'b')
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("id 'bad id' does not match", r.stderr)
+        self.assertIn("field 'recommended' must be option-id", r.stderr)
+
+    def test_answers_and_labels_have_a_schema_too(self):
+        cr.check_doc('answers', 'search-scope', {'choice': 'titles', 'note': '', 'updated': '2026-01-03T14:00:00Z'})
+        cr.check_doc('labels', 'q-01', {'goal': 'find-dish', 'updated': '2026-01-03T09:00:00Z'})
+        with self.assertRaises(SystemExit):
+            cr.check_doc('labels', 'q-01', {'label': 'find-dish', 'updated': '2026-01-03T09:00:00Z'})
+
+
 class PageTests(unittest.TestCase):
     def test_page_is_static_and_loads_its_data_by_fetch(self):
         page = cr.page('Pantry <Notes> Control Room')

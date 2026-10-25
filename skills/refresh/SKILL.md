@@ -28,4 +28,11 @@ your scratchpad; it never goes into git.
 5. The artifact service refuses a publish as stale when someone published after your
    last read: read it again (step 1), rerun, publish again.
 
-Never edit the page or `state.json` by hand. Change the files they are made from.
+6. **A pull request event** (the page shows a merge or a ready mark without a
+   republish): never type the document by hand. Build it:
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/control_room.py" event pr <number> <open|ready|merged|closed> --title "<title>" --url <url>`
+   and write exactly what it prints with the ArtifactData tool (`set`, its
+   `collection`, `doc_id` and `data`).
+
+Never edit the page, `state.json` or a store document by hand. Change the files they are
+made from, or build the document with the script.

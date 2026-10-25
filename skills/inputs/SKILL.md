@@ -11,10 +11,12 @@ Argument: `$ARGUMENTS` (`ask`, `review` or `record`). The control room is
 
 ## ask: a decision card
 
-1. Write the card into the store with the ArtifactData tool, document `questions/<id>`:
-   `{order, task, title, body, options: [{id, label, detail}], recommended, why}`.
-   `<id>` uses letters, digits and `. _ ~ -`. `task` is the task ID it is for.
-   `recommended` is an option's `id`; `why` gives the reason in two or three sentences.
+1. Never type a store document by hand. Build the card with the script, which checks
+   it against `${CLAUDE_PLUGIN_ROOT}/scripts/store-schema.json`:
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/control_room.py" card --id <id> --task <task ID> --order <n> --title "<title>" --body "<body>" --option <id> "<label>" "<detail>" --option ... --recommended <option id> --why "<two or three sentences>"`
+   `<id>` uses letters, digits and `. _ ~ -`. If it prints an error, fix the arguments.
+   Write exactly what it prints with the ArtifactData tool: `set`, with its
+   `collection`, `doc_id` and `data`.
 2. Tell the owner in one line, with the card's link: `<control room>#q-<id>`.
 
 ## review: items to label or judge

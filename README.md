@@ -213,6 +213,16 @@ What cannot come from git lives in the page's store:
 
 A pull request event newer than the state file wins over it; an older one is ignored.
 
+`scripts/store-schema.json` fixes these shapes: a field it does not list, or a missing
+required one, is refused. Never type a store document by hand. Build it, and write
+exactly what the script prints with the ArtifactData tool:
+
+```bash
+python3 scripts/control_room.py card --id <id> --title "<title>" --body "<body>" \
+  --option <id> "<label>" "<detail>" --option ... [--task <ID>] [--order <n>] [--recommended <id>] [--why "<why>"]
+python3 scripts/control_room.py event pr <number> <open|ready|merged|closed> [--title "<title>"] [--url <url>]
+```
+
 ### Publish a control room for a new project
 
 1. Run the `refresh` skill with no track names. It writes `index.html` and
@@ -252,7 +262,7 @@ a later version.
 .claude-plugin/   plugin.json, marketplace.json
 skills/           the six skills
 agents/           developer, reviewer, scribe
-scripts/          control_room.py, control-room/ (the page), control-room-refresh.sh, rebase-open-prs.sh
+scripts/          control_room.py, store-schema.json, control-room/ (the page), control-room-refresh.sh, rebase-open-prs.sh
 templates/        plan, task, record, sample review spec, program, sdlc
 hooks/            hooks.json
 tests/            the generator's and the page's tests on invented fixtures

@@ -7,6 +7,9 @@
     python3 control_room.py page    --out index.html [--title NAME] [--root DIR]
     python3 control_room.py brief   track SLUG | program [--prs prs.json] [--store store.json] [--root DIR]
     python3 control_room.py handoff --track SLUG --text handoff.md [--root DIR]
+    python3 control_room.py card    --id ID --title T --body B --option ID LABEL [DETAIL] ... [--task ID]
+                                    [--order N] [--recommended ID] [--why TEXT]
+    python3 control_room.py event   pr NUMBER open|ready|merged|closed [--title T] [--url URL] [--updated TIME]
 
 `state` reads the consuming project (foreman.json, track plans, task files, plain words,
 bench evidence, decision records under docs/inputs/) and writes one JSON file. `--prs`
@@ -17,8 +20,9 @@ undo another coordinator's publish. `review` turns a review spec (items for the 
 label) into review.json. `page` writes the static page from control-room/; it embeds no
 data and loads state.json and review.json with fetch() from beside itself. It rewrites
 the file only when the page source changed. `brief` prints a session's starting brief;
-`handoff` writes a plan's "Handoff and memory" section. The plugin's README says how it
-fits together.
+`handoff` writes a plan's "Handoff and memory" section. `card` and `event` build a store
+document (a decision card, a pull request event), check it against store-schema.json and
+print the exact payload to write. The plugin's README says how it fits together.
 
 Only repo text and aggregates reach state.json: never a transcript, a record or a path
 from private data. Review items are private material and go to review.json only.
@@ -505,6 +509,65 @@ def review(spec: dict) -> dict:
             "rows": [{k: r[k] for k in ("id", "title", "meta_short", "meta", "turns", "tags") if k in r} for r in rows]}
 
 
+# ---------------------------------------------------------------- store documents
+
+STORE_SCHEMA = json.loads((HERE / "store-schema.json").read_text(encoding="utf-8"))
+TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z")
+
+
+def check_doc(collection: str, doc_id: str, data: dict) -> dict:
+    """The payload to write, or SystemExit naming every way `data` breaks store-schema.json."""
+    schema = STORE_SCHEMA.get(collection)
+    if not isinstance(schema, dict) or collection == "about":
+        raise SystemExit(f"no store collection {collection!r}")
+    errors = [] if re.fullmatch(schema["id"], doc_id) else [f"id {doc_id!r} does not match {schema['id']}"]
+    fields = schema["fields"]
+    errors += [f"unknown field {k!r} (allowed: {', '.join(fields)})" for k in data if k not in fields]
+    errors += [f"missing field {k!r}" for k, f in fields.items() if f.get("required") and k not in data]
+    option_ids = [o.get("id") for o in data.get("options") or [] if isinstance(o, dict)]
+    for k, v in data.items():
+        f = fields.get(k)
+        if not f:
+            continue
+        kind = f["type"]
+        ok = {
+            "string": isinstance(v, str), "number": isinstance(v, (int, float)) and not isinstance(v, bool),
+            "integer": isinstance(v, int) and not isinstance(v, bool), "time": isinstance(v, str) and bool(TIME.fullmatch(v)),
+            "https": isinstance(v, str) and v.startswith("https://"), "option-id": v in option_ids,
+            "options": isinstance(v, list) and len(v) > 0 and all(
+                isinstance(o, dict) and set(o) <= {"id", "label", "detail"} and isinstance(o.get("id"), str)
+                and SAFE_ID.fullmatch(o["id"]) and isinstance(o.get("label"), str) for o in v)
+                and len(set(option_ids)) == len(v),
+        }[kind]
+        if ok and "enum" in f and v not in f["enum"]:
+            ok, kind = False, " | ".join(f["enum"])
+        if not ok:
+            errors.append(f"field {k!r} must be {kind}, not {json.dumps(v)}")
+    if collection == "events" and isinstance(data.get("number"), int) and doc_id != f"pr-{data['number']}":
+        errors.append(f"id {doc_id!r} must be pr-{data['number']}")
+    if errors:
+        raise SystemExit(f"{collection}/{doc_id} is not a valid store document:\n- " + "\n- ".join(errors))
+    return {"collection": collection, "doc_id": doc_id, "data": data}
+
+
+def card(args) -> dict:
+    options = []
+    for o in args.option:
+        if len(o) not in (2, 3):
+            raise SystemExit("--option takes ID LABEL [DETAIL]")
+        options.append(dict(zip(("id", "label", "detail"), o)))
+    data = {"title": args.title, "body": args.body, "options": options}
+    data.update({k: v for k, v in (("order", args.order), ("task", args.task), ("recommended", args.recommended), ("why", args.why)) if v is not None})
+    return check_doc("questions", args.id, data)
+
+
+def event(args) -> dict:
+    data = {"number": args.number, "state": args.state,
+            "updated": args.updated or dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    data.update({k: v for k, v in (("title", args.title), ("url", args.url)) if v is not None})
+    return check_doc("events", f"pr-{args.number}", data)
+
+
 # ---------------------------------------------------------------- session brief and handoff
 
 PROGRAM_DUTIES = [
@@ -659,6 +722,22 @@ def main(argv: list[str] | None = None) -> None:
     h.add_argument("--root", default=".")
     h.add_argument("--track", required=True)
     h.add_argument("--text", required=True, help="a file with the section's body")
+    c = sub.add_parser("card", help="print a decision card for the store: questions/<id>")
+    c.add_argument("--id", required=True)
+    c.add_argument("--title", required=True)
+    c.add_argument("--body", required=True)
+    c.add_argument("--option", nargs="+", action="append", required=True, metavar="ID LABEL [DETAIL]")
+    c.add_argument("--task")
+    c.add_argument("--order", type=float)
+    c.add_argument("--recommended", help="the id of the option the coordinator would pick")
+    c.add_argument("--why")
+    e = sub.add_parser("event", help="print a pull request event for the store: events/pr-<n>")
+    e.add_argument("kind", choices=["pr"])
+    e.add_argument("number", type=int)
+    e.add_argument("state", choices=STORE_SCHEMA["events"]["fields"]["state"]["enum"])
+    e.add_argument("--title")
+    e.add_argument("--url")
+    e.add_argument("--updated", help="UTC time, YYYY-MM-DDTHH:MM:SSZ; default now")
     args = ap.parse_args(argv)
     load = lambda f: json.loads(Path(f).read_text(encoding="utf-8")) if f else None
 
@@ -683,6 +762,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.scope == "track" and not args.slug:
             raise SystemExit("brief track needs the track's slug")
         sys.stdout.write(brief(Path(args.root), args.scope, args.slug, load(args.prs), load(args.store)))
+    elif args.cmd in ("card", "event"):
+        print(json.dumps((card if args.cmd == "card" else event)(args), ensure_ascii=False))
     elif args.cmd == "handoff":
         print(handoff(Path(args.root), args.track, Path(args.text).read_text(encoding="utf-8")))
 
