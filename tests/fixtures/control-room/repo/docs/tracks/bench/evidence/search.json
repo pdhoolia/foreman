@@ -1,0 +1,12 @@
+[
+  {"format": "bench-report/v1", "variant": "plain-words", "kind": "clustering", "set": "short-queries", "records": 40, "labelled": 40,
+   "params": {"k": 8}, "metrics": {"purity": 0.5, "inverse_purity": 0.25, "ari": 0.1, "abstained": 2, "clusters": {"count": 8, "max": 9}}},
+  {"format": "bench-report/v1", "variant": "stemming", "kind": "clustering", "set": "short-queries", "records": 40, "labelled": 40,
+   "params": {"k": 8}, "metrics": {"purity": 0.6, "inverse_purity": 0.3, "ari": 0.2, "abstained": 2, "clusters": {"count": 8}}},
+  {"format": "bench-report/v1", "variant": "stemming", "kind": "clustering", "set": "long-queries", "records": 12, "labelled": 12,
+   "params": {"k": 4, "alpha": 0.5}, "metrics": {"purity": 0.7, "inverse_purity": 0.4, "ari": 0.3, "abstained": 0, "clusters": {"count": 4}}},
+  {"format": "bench-report/v1", "variant": "stemming", "kind": "clustering", "set": "long-queries", "records": 12, "labelled": 12,
+   "params": {"k": 4, "alpha": 0.25}, "metrics": {"purity": 0.7, "inverse_purity": 0.4, "ari": 0.3, "abstained": 0, "clusters": {"count": 4}}},
+  {"format": "bench-report/v1", "variant": "prefix-names", "kind": "skills", "set": "short-queries", "records": 40, "labelled": 40,
+   "params": {"min_support": 2}, "metrics": {"candidates": {"count": 3}, "coverage": 0.25, "coverage_overall": 0.2, "support": {"median": 2.5}, "clusters": 5}}
+]

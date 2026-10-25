@@ -1,0 +1,4 @@
+{
+  "description": "Checks that run on their own. Empty until the enforcement hooks land.",
+  "hooks": {}
+}

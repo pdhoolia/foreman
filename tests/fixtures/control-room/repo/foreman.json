@@ -1,0 +1,10 @@
+{
+  "title": "Pantry Notes Control Room",
+  "control_room_url": "https://example.com/control-room",
+  "tracks": [
+    {"slug": "bench", "lanes": [
+      {"key": "A", "name": "search bench", "work": "score search ideas offline", "where": "local", "model": "Model Y, high"},
+      {"key": "B", "name": "search variants", "work": "one task per variant", "where": "local", "model": "Model Y, medium"}
+    ]}
+  ]
+}

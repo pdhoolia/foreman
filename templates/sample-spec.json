@@ -1,0 +1,85 @@
+{
+  "title": "Sample review round",
+  "intro": "A made-up review round, so you can judge how the control room's Review tab looks and reads. scripts/control_room.py review reads only the items below.",
+  "items": {
+    "heading": "What were these 6 sessions for?",
+    "lede": "These are six made-up work sessions on a small recipe app called Pantry Notes. For each one, read how it started and give it a short name for what the session was for. Keep the same word for the same kind of work, so similar sessions end up together.",
+    "field": "What was this session for?",
+    "placeholder": "one word or a hyphenated phrase",
+    "assist": "Propose one goal label for this work session: lowercase, 1 to 3 words joined by hyphens, naming what the person was trying to get done. Prefer a label already in use when it fits.",
+    "rows": [
+      {
+        "id": "sample-01",
+        "title": "Search box returns nothing for words with capitals",
+        "meta_short": "Mon, 25 min",
+        "meta": "Pantry Notes, Monday morning, about 25 minutes",
+        "turns": [
+          {"who": "You", "text": "When I type \"Tomato\" in the search box I get no recipes, but \"tomato\" works. Can you find out why?"},
+          {"who": "Assistant", "text": "The search compares the words exactly as typed, so capital letters do not match. I can make it ignore case and add a test for it."},
+          {"who": "You, later", "text": "Yes, do that. Also check that accents like in \"jalapeño\" still work."}
+        ],
+        "tags": ["Read", "Edit", "Bash"]
+      },
+      {
+        "id": "sample-02",
+        "title": "Add a cooking time field to each recipe",
+        "meta_short": "Mon, 50 min",
+        "meta": "Pantry Notes, Monday afternoon, about 50 minutes",
+        "turns": [
+          {"who": "You", "text": "I want every recipe to show how long it takes to cook. Can we add a field for that?"},
+          {"who": "Assistant", "text": "Yes. I will add a cooking time in minutes to the recipe form and the recipe page, and leave it empty for old recipes."},
+          {"who": "You, later", "text": "Looks good. Show it as \"1 h 20 min\" instead of \"80\" on the page."}
+        ],
+        "tags": ["Read", "Edit", "Write"]
+      },
+      {
+        "id": "sample-03",
+        "title": "Tests fail after updating the date library",
+        "meta_short": "Tue, 35 min",
+        "meta": "Pantry Notes, Tuesday morning, about 35 minutes",
+        "turns": [
+          {"who": "You", "text": "I updated the date library and now four tests fail. Can you get them passing again?"},
+          {"who": "Assistant", "text": "The new version prints dates in a slightly different format. The app is fine; the tests expect the old format. I can update the tests."},
+          {"who": "You, later", "text": "Fine, but make sure the shopping list still sorts by date correctly."}
+        ],
+        "tags": ["Bash", "Read", "Edit"]
+      },
+      {
+        "id": "sample-04",
+        "title": "Write the getting-started notes for new helpers",
+        "meta_short": "Wed, 20 min",
+        "meta": "Pantry Notes, Wednesday, about 20 minutes",
+        "turns": [
+          {"who": "You", "text": "A friend wants to help with the app. Can you write short notes on how to set it up and run it?"},
+          {"who": "Assistant", "text": "I will write a short page: what to install, how to start the app, how to run the tests, and where the main parts live."},
+          {"who": "You, later", "text": "Keep it to one screen. She is new to this, so explain any word she might not know."}
+        ],
+        "tags": ["Read", "Write"]
+      },
+      {
+        "id": "sample-05",
+        "title": "Shopping list adds the same item twice",
+        "meta_short": "Thu, 30 min",
+        "meta": "Pantry Notes, Thursday evening, about 30 minutes",
+        "turns": [
+          {"who": "You", "text": "If two recipes both need onions, the shopping list shows onions twice. Can it add them up instead?"},
+          {"who": "Assistant", "text": "Right now each recipe adds its own line. I can merge lines with the same item and unit, and keep them apart when the units differ."},
+          {"who": "You, later", "text": "Good. \"2 onions\" and \"1 onion\" should become \"3 onions\", not \"3 onion\"."}
+        ],
+        "tags": ["Read", "Edit", "Bash"]
+      },
+      {
+        "id": "sample-06",
+        "title": "Make the recipe page readable on a phone",
+        "meta_short": "Fri, 40 min",
+        "meta": "Pantry Notes, Friday, about 40 minutes",
+        "turns": [
+          {"who": "You", "text": "On my phone the recipe page is cut off on the right side. Can you fix the layout?"},
+          {"who": "Assistant", "text": "The ingredient table is too wide for small screens. I can stack it into a simple list when the screen is narrow."},
+          {"who": "You, later", "text": "Better. Make the step numbers bigger too, I read them while cooking."}
+        ],
+        "tags": ["Read", "Edit"]
+      }
+    ]
+  }
+}

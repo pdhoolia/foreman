@@ -1,0 +1,7 @@
+{
+  "name": "foreman",
+  "version": "0.1.0",
+  "description": "A way of working for a project run by one owner and many agent sessions: track plans and task files under fixed conventions, parallel developer and reviewer sessions, and owner decisions through a private control room page.",
+  "author": {"name": "foreman maintainers"},
+  "keywords": ["workflow", "planning", "coordination", "control-room"]
+}

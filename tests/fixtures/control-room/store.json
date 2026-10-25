@@ -1,0 +1,26 @@
+{
+  "db": "on",
+  "questions": [
+    {"id": "search-scope", "order": 1, "task": "A01", "title": "Should search also look inside the steps?",
+     "body": "Today search reads titles and ingredients.\n\nSteps are longer and noisier.",
+     "options": [{"id": "titles", "label": "Titles and ingredients only", "detail": "Fast and precise."},
+                 {"id": "steps", "label": "Steps too", "detail": "Finds more, with more noise."}],
+     "recommended": "titles", "why": "Most searches name a dish or an ingredient."},
+    {"id": "escape-check", "order": 2, "task": "W01", "title": "<img src=x onerror=alert(1)>", "body": "</script><script>alert(1)</script>",
+     "options": [{"id": "a\" onfocus=\"alert(1)", "label": "<b>bold</b>"}]},
+    {"id": "search-labels", "order": 0, "title": "Which labels should the search bench use?",
+     "options": [{"id": "categories", "label": "The recipe categories"}, {"id": "hand", "label": "Hand labels"}]}
+  ],
+  "answers": {
+    "search-labels": {"choice": "hand", "note": "Categories are too coarse for search.", "updated": "2026-01-02T18:00:00Z"},
+    "escape-check": {"choice": null, "note": "a note without a choice keeps the card open"}
+  },
+  "events": {
+    "pr-7": {"number": 7, "title": "Add the search bench", "state": "merged", "updated": "2026-01-03T11:00:00Z"},
+    "pr-8": {"number": 8, "title": "Add the list model", "url": "https://github.com/example/pantry-notes/pull/8", "state": "ready", "updated": "2026-01-03T13:00:00Z"},
+    "pr-9": {"number": 9, "state": "merged", "updated": "2026-01-03T13:00:00Z"},
+    "pr-10": {"number": 10, "title": "Start the phone layout", "url": "https://github.com/example/pantry-notes/pull/10", "state": "open", "updated": "2026-01-03T13:05:00Z"},
+    "pr-11": {"number": 11, "title": "A row with a bad link", "url": "javascript:alert(1)", "state": "ready", "updated": "2026-01-03T13:06:00Z"}
+  },
+  "labels": {"q-01": {"goal": "find-dish", "updated": "2026-01-03T09:00:00Z"}}
+}
