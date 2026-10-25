@@ -1,13 +1,15 @@
 ---
 name: refresh
 description: Regenerate the control room's state.json (and review.json when a review round is open) from the project's files and print the publish parameters. Use after every dispatch, PR change, merge or new decision record.
-argument-hint: [own track slug ...]
+argument-hint: <own track slug ...> | --all
 ---
 
 # Refresh the control room
 
-Arguments: `$ARGUMENTS`, the slugs of the tracks this session owns. A program session
-or a first publish passes none. Run from the project's root. `<out>` is a folder in
+Arguments: `$ARGUMENTS`, the slugs of the tracks this session owns, or `--all` for the
+first publish and for a program session working from `main`. A publish is a merge, not
+a replacement: each track's entries (its plan and its tasks) are that track's manifest,
+and only the owner of a track replaces them. Run from the project's root. `<out>` is a folder in
 your scratchpad; it never goes into git.
 
 1. **Keep the other tracks.** When you name tracks, you write only those. Save the

@@ -144,7 +144,7 @@ class ScratchProjectTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def refresh(self, *own):
-        r = run(['bash', str(REFRESH), str(self.out), *own], self.proj, self.d)
+        r = run(['bash', str(REFRESH), str(self.out), *(own or ['--all'])], self.proj, self.d)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout, json.loads((self.out / 'state.json').read_text(encoding='utf-8'))
 
@@ -184,6 +184,9 @@ class ScratchProjectTests(unittest.TestCase):
         (self.out / 'live-state.json').unlink()
         r = run(['bash', str(REFRESH), str(self.out), 'garden'], self.proj, self.d)
         self.assertNotEqual(r.returncode, 0)  # naming a track without the published state is refused
+        r = run(['bash', str(REFRESH), str(self.out)], self.proj, self.d)
+        self.assertNotEqual(r.returncode, 0)  # neither tracks nor --all: a replacement is never the default
+        self.assertIn('--all', r.stderr)
 
     def test_track_brief(self):
         (self.d / 'store.json').write_text(json.dumps(STORE), encoding='utf-8')

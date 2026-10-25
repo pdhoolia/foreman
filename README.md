@@ -225,7 +225,7 @@ python3 scripts/control_room.py event pr <number> <open|ready|merged|closed> [--
 
 ### Publish a control room for a new project
 
-1. Run the `refresh` skill with no track names. It writes `index.html` and
+1. Run the `refresh` skill with `--all`. It writes `index.html` and
    `state.json` to a folder in your scratchpad and prints the publish parameters.
 2. **First publish**, with the Artifact tool: `file_path` the printed `index.html`,
    `files` `{"state.json": ...}`, `capabilities` `{"db": {}, "user": {}, "sample": {}}`
@@ -239,10 +239,14 @@ python3 scripts/control_room.py event pr <number> <open|ready|merged|closed> [--
 ### Several coordinators, one page
 
 Each coordinator works from its own branch, so a state file made from one checkout
-does not see another coordinator's unmerged changes. A coordinator therefore names the
-tracks it owns: `refresh <slug>` first saves the published `state.json` and keeps every
-other track as published. Only the named tracks come from the checkout. A program
-session, or a first publish, names none.
+does not see another coordinator's unmerged changes. So a publish is a merge, not a
+replacement. Each track's entries in `state.json` (its plan and its tasks) are that
+track's manifest. `refresh <slug> ...` first saves the published `state.json`, takes the
+named tracks from the checkout, and keeps every other track's manifest as published.
+`refresh --all` takes every track from the checkout: for the first publish, or a
+program session working from `main`. Refresh refuses to run with neither. When two
+coordinators publish at the same moment, the artifact service refuses the later
+publish as stale; that coordinator reads the published state again and repeats.
 
 ### Privacy
 

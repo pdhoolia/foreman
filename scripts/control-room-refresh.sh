@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
 # Refresh the control room's files in one step, then print what the coordinator publishes.
-#   control-room-refresh.sh <out-dir> [own-track-slug ...]
+#   control-room-refresh.sh <out-dir> <own-track-slug ...> | --all
 # Run it from inside the project's checkout. Fetches the open pull requests, regenerates
-# <out-dir>/state.json from the checkout, and writes <out-dir>/index.html only when the
-# page source changed. With track slugs, it keeps every other track as the published
-# state has it: save the published state.json as <out-dir>/live-state.json first (the
-# refresh skill says how). Without slugs, every track comes from this checkout. A review
+# <out-dir>/state.json and writes <out-dir>/index.html only when the page source changed.
+# The state is a merge, not a replacement: only the named tracks come from this checkout,
+# and every other track is kept as the published state has it. Save the published
+# state.json as <out-dir>/live-state.json first (the refresh skill says how). --all takes
+# every track from this checkout: for the first publish, or a program session on main. A review
 # round's <out-dir>/review.json is made separately (control_room.py review) and is
 # published once; a later publish that leaves it out keeps it. The control room's URL
 # comes from foreman.json (control_room_url) or CONTROL_ROOM_URL.
 set -euo pipefail
-out="${1:?usage: control-room-refresh.sh <out-dir> [own-track-slug ...]}"
+usage="usage: control-room-refresh.sh <out-dir> <own-track-slug ...> | --all"
+out="${1:?$usage}"
 shift
+[ "$#" -gt 0 ] || { echo "$usage" >&2; exit 1; }
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(git rev-parse --show-toplevel)"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 url="${CONTROL_ROOM_URL:-$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("control_room_url") or "")' "$root/foreman.json" 2>/dev/null || true)}"
 live=()
-if [ "$#" -gt 0 ]; then
+if [ "$1" != "--all" ]; then
   [ -f "$out/live-state.json" ] || { echo "save the published state.json as $out/live-state.json first" >&2; exit 1; }
   live=(--live "$out/live-state.json" --own "$@")
 fi
