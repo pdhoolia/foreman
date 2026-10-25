@@ -1,0 +1,15 @@
+{
+  "title": "Pantry Notes owner inputs (fictional)",
+  "items": {
+    "heading": "What was each search for?",
+    "lede": "Three made-up searches from the Pantry Notes search box. Give each a short name for what the person wanted.",
+    "field": "What was this search for?",
+    "placeholder": "one word or a hyphenated phrase",
+    "assist": "Propose one goal label for this search: lowercase, 1 to 3 words joined by hyphens.",
+    "rows": [
+      {"id": "q-01", "title": "tomato soup", "meta_short": "Mon", "meta": "Monday, the search box", "turns": [{"who": "Search", "text": "tomato soup"}], "tags": ["search"]},
+      {"id": "q-02", "title": "quick dinner", "meta_short": "Tue", "turns": [{"who": "Search", "text": "</script><script>alert(1)</script>"}], "private_note": "dropped by the generator"},
+      {"id": "q-03", "title": "jalapeño", "meta_short": "Wed", "turns": [{"who": "Search", "text": "jalapeño"}]}
+    ]
+  }
+}

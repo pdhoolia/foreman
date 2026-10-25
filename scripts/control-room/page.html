@@ -1,0 +1,35 @@
+<title>{{TITLE}}</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,400&display=swap">
+<style>/*{{CSS}}*/</style>
+<header class="top">
+  <div class="wrap top-inner">
+    <h1>{{TITLE}}</h1>
+    <p class="fresh" id="fresh">Loading the project state.</p>
+  </div>
+</header>
+<nav class="tabs" aria-label="Sections">
+  <div class="wrap tablist" role="tablist" id="tablist">
+    <a class="tab tab-needs" role="tab" id="tab-needs" href="#needs" aria-controls="needs" aria-selected="true">Needs you<span class="badge" id="badge-needs" hidden></span></a>
+    <a class="tab" role="tab" id="tab-lanes" href="#lanes" aria-controls="lanes" aria-selected="false">Lanes</a>
+    <a class="tab" role="tab" id="tab-findings" href="#findings" aria-controls="findings" aria-selected="false">Findings</a>
+    <a class="tab" role="tab" id="tab-review" href="#review" aria-controls="review" aria-selected="false" hidden>Review<span class="badge soft" id="badge-review" hidden></span></a>
+    <a class="tab" role="tab" id="tab-records" href="#records" aria-controls="records" aria-selected="false">Records</a>
+  </div>
+</nav>
+<main class="wrap">
+  <section class="panel" id="needs" role="tabpanel" aria-labelledby="tab-needs" tabindex="-1">
+    <p class="note">Loading what waits for you.</p>
+  </section>
+  <section class="panel" id="lanes" role="tabpanel" aria-labelledby="tab-lanes" tabindex="-1" hidden>
+    <p class="note">Loading the lanes.</p>
+  </section>
+  <section class="panel" id="findings" role="tabpanel" aria-labelledby="tab-findings" tabindex="-1" hidden>
+    <p class="note">Loading the findings.</p>
+  </section>
+  <section class="panel" id="review" role="tabpanel" aria-labelledby="tab-review" tabindex="-1" hidden></section>
+  <section class="panel" id="records" role="tabpanel" aria-labelledby="tab-records" tabindex="-1" hidden>
+    <p class="note">Loading the records.</p>
+  </section>
+</main>
+<script>/*{{JS}}*/</script>

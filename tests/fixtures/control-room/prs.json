@@ -1,0 +1,5 @@
+[
+  {"number": 7, "title": "Add the search bench", "headRefName": "fiction/bench", "isDraft": false, "url": "https://github.com/example/pantry-notes/pull/7", "updatedAt": "2026-01-03T10:00:00Z"},
+  {"number": 8, "title": "Add the list model", "headRefName": "fiction/list-model", "isDraft": true, "url": "https://github.com/example/pantry-notes/pull/8", "updatedAt": "2026-01-03T10:00:00Z"},
+  {"number": 9, "title": "Fix a typo in the README", "headRefName": "fiction/typo", "isDraft": false, "url": "https://github.com/example/pantry-notes/pull/9", "updatedAt": "2026-01-03T10:00:00Z"}
+]
