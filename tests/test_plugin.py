@@ -293,7 +293,7 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue(manifest['description'] and manifest['author']['name'])
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text(encoding='utf-8'))
         self.assertEqual([(p['name'], p['source']) for p in market['plugins']], [('foreman', './')])
-        self.assertEqual(json.loads((ROOT / 'hooks/hooks.json').read_text(encoding='utf-8'))['hooks'], {})
+        self.assertEqual(set(json.loads((ROOT / 'hooks/hooks.json').read_text(encoding='utf-8'))['hooks']), {'SessionStart', 'PreToolUse', 'PostToolUse'})
         skills = {p.parent.name for p in (ROOT / 'skills').glob('*/SKILL.md')}
         self.assertEqual(skills, SKILLS)
         for name in SKILLS:

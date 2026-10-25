@@ -1,4 +1,117 @@
 {
-  "description": "Checks that run on their own. Empty until the enforcement hooks land.",
-  "hooks": {}
+  "description": "Checks that run on their own: the store's document shapes, the ready gate, the control room refresh after a pull request write, the branch name, task file and plan shape, plain words, and no agent session links or footers on GitHub.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/branch_name.py\"",
+            "statusMessage": "Checking the branch name"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "[Aa]rtifact_?[Dd]ata",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/store_shape.py\"",
+            "statusMessage": "Checking the store document against store-schema.json"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/branch_name.py\"",
+            "statusMessage": "Checking the branch name",
+            "if": "Bash(git *)"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/task_shape.py\"",
+            "statusMessage": "Checking staged task files and plans",
+            "if": "Bash(git *)"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/ready_gate.py\"",
+            "statusMessage": "Checking the ready gate",
+            "if": "Bash(gh *)"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plain_language.py\"",
+            "statusMessage": "Checking the text for plain words",
+            "if": "Bash(gh *)"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-link-gh.sh\"",
+            "statusMessage": "Checking the gh write for a session link or agent footer"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__(create|update|merge)_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/ready_gate.py\"",
+            "statusMessage": "Checking the ready gate"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plain_language.py\"",
+            "statusMessage": "Checking the text for plain words"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__(create|update|add|submit|push|merge|delete)_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-link-mcp.sh\"",
+            "statusMessage": "Checking the GitHub write for a session link or agent footer"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/refresh_after_pr.py\"",
+            "statusMessage": "Refreshing the control room after a pull request write",
+            "if": "Bash(gh *)",
+            "timeout": 600
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__(create|update|merge)_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/refresh_after_pr.py\"",
+            "statusMessage": "Refreshing the control room after a pull request write",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
 }
