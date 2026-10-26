@@ -4,8 +4,9 @@
 # Run it from inside the project's checkout. The command is foreman.json's "checks": a
 # script path (run with bash) or a shell command. The checks run on a commit, so tracked
 # files must have no uncommitted change. On success the marker
-# <git dir>/foreman/checks/<head commit> is written; the ready gate hook
-# (hooks/ready_gate.py) looks for it before a pull request is marked ready.
+# <git dir>/foreman/checks/<head commit> is written, in the git directory all worktrees
+# share; the ready gate hook (hooks/ready_gate.py) looks for it before a pull request is
+# marked ready.
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
@@ -17,7 +18,7 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
 fi
 head="$(git rev-parse HEAD)"
 if [ -f "$cmd" ]; then bash "$cmd"; else bash -c "$cmd"; fi
-marks="$(git rev-parse --absolute-git-dir)/foreman/checks"
+marks="$(git rev-parse --path-format=absolute --git-common-dir)/foreman/checks"
 mkdir -p "$marks"
 date -u +%Y-%m-%dT%H:%M:%SZ > "$marks/$head"
 echo "checks passed on $head"

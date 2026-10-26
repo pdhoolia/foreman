@@ -24,8 +24,9 @@ Argument: `$ARGUMENTS` (`ask`, `review` or `record`). The control room is
 1. Start from `${CLAUDE_PLUGIN_ROOT}/templates/sample-spec.json`. Keep each item to what
    the owner needs to see: a title, a line of context, the opening turns, tags. Never a
    whole transcript or tool arguments.
-2. Run the `refresh` skill after making `review.json` as it says. The spec and
-   `review.json` stay in your scratchpad; they never go into git.
+2. Run the `refresh` skill after making `review.json` as it says. The spec stays in
+   your scratchpad and `review.json` in the refresh folder under the git directory
+   (`<git dir>/foreman/control-room/`); neither goes into a commit.
 
 ## record: read the answers and write the round
 
