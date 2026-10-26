@@ -1,5 +1,5 @@
 {
-  "description": "Checks that run on their own: the store's document shapes, the ready gate, the control room refresh after a pull request write, the branch name, task file and plan shape, plain words, and no agent session links or footers on GitHub.",
+  "description": "Checks that run on their own: the store's document shapes, the ready gate, the control room refresh after a pull request write, the branch name, the commit author, task file and plan shape, plain words, and no agent session links or footers on GitHub.",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/branch_name.py\"",
             "statusMessage": "Checking the branch name"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/commit_author.py\"",
+            "statusMessage": "Setting the commit author"
           }
         ]
       }
@@ -30,6 +35,12 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/branch_name.py\"",
             "statusMessage": "Checking the branch name",
+            "if": "Bash(git *)"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/commit_author.py\"",
+            "statusMessage": "Checking the commit author",
             "if": "Bash(git *)"
           },
           {

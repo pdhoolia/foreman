@@ -6,15 +6,20 @@ for the commit at the head of that pull request,
 1. the project's checks passed: scripts/check.sh runs foreman.json's `checks` command and,
    on success, leaves a marker for that commit under the git directory; and
 2. the branch's task file (the one whose `- Branch:` names the pull request's branch)
-   proposes completion at that commit: `- State: done` or `review`.
+   proposes completion at that commit: `- State: done` or `review`; and
+3. the coordinator's review pass has passed that commit: an issue comment on the pull
+   request whose first line is exactly `foreman review: ready <full head sha>`. A verdict
+   for another commit does not count.
 
 The head is read from GitHub: with gh api for a pull request named by number, and with
-git ls-remote for a new one, whose branch on GitHub must then match the checkout's HEAD
-when it is the branch checked out. A repository named in the call (owner and repo on an
-MCP write, -R on gh) is the one asked.
+git ls-remote for one named by branch, whose branch on GitHub must then match the
+checkout's HEAD when it is the branch checked out. A repository named in the call (owner
+and repo on an MCP write, -R on gh) is the one asked. A new pull request (gh pr create
+without --draft, an MCP create without draft) has no comment yet, so it is denied: open
+it as a draft.
 A project whose foreman.json names no `checks` skips the first test; a branch that no
-task file names skips the second. An unreadable foreman.json, or a head that cannot be
-found, denies.
+task file names skips the second. An unreadable foreman.json, a head that cannot be
+found, or comments that cannot be read, denies.
 """
 import re
 import shlex
@@ -35,12 +40,13 @@ class NoHead(Exception):
 
 def marked(p: dict) -> tuple[str, str | None, str | None, str | None] | None:
     """(how, pull request number, branch, repository) when this call marks a pull request
-    ready, else None. `how` is "number" when the number names it, else "branch"; the
-    repository is "owner/repo" when the call names one."""
+    ready, else None. `how` is "number" when the number names it, "branch" when a branch
+    does, and "new" for a pull request being created; the repository is "owner/repo" when
+    the call names one."""
     tool, ti = p.get("tool_name") or "", p.get("tool_input") or {}
     repo = f"{ti['owner']}/{ti['repo']}" if ti.get("owner") and ti.get("repo") else None
     if tool.endswith("__create_pull_request"):
-        return None if ti.get("draft") is True else ("branch", None, str(ti.get("head") or "").split(":")[-1] or None, repo)
+        return None if ti.get("draft") is True else ("new", None, str(ti.get("head") or "").split(":")[-1] or None, repo)
     if tool.endswith("__update_pull_request"):
         return ("number", str(ti.get("pullNumber")), None, repo) if ti.get("draft") is False else None
     cmd = bash_command(p)
@@ -59,20 +65,27 @@ def marked(p: dict) -> tuple[str, str | None, str | None, str | None] | None:
     if {"--draft", "-d"} & set(args):
         return None
     head = next((b for a, b in zip(args, args[1:]) if a in ("--head", "-H")), None)
-    return "branch", None, head.split(":")[-1] if head else None, repo
+    return "new", None, head.split(":")[-1] if head else None, repo
 
 
-def head_of(root: Path, how: str, number: str | None, branch: str | None, repo: str | None) -> tuple[str, str]:
-    """The commit and branch at the head of the pull request being marked, as GitHub has them."""
+def gh_api(root: Path, path: str, jq: str) -> str:
+    """What `gh api <path> --jq <jq>` prints; raises NoHead when it fails."""
+    r = subprocess.run(["gh", "api", "--paginate", path, "--jq", jq], cwd=root, capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise NoHead(f"cannot read {path} from GitHub ({(r.stderr or r.stdout).strip()[:200]})")
+    return r.stdout
+
+
+def head_of(root: Path, how: str, number: str | None, branch: str | None, repo: str | None) -> tuple[str, str, str]:
+    """The commit, branch and number of the pull request being marked, as GitHub has them."""
     remote = f"https://github.com/{repo}.git" if repo else "origin"
     where = repo or "origin"
+    api = repo or "{owner}/{repo}"
     if how == "number":
-        r = subprocess.run(["gh", "api", f"repos/{repo or '{owner}/{repo}'}/pulls/{number}", "--jq", '.head.sha + " " + .head.ref'],
-                           cwd=root, capture_output=True, text=True, timeout=60)
-        parts = r.stdout.split()
-        if r.returncode != 0 or len(parts) != 2:
-            raise NoHead(f"cannot read pull request #{number} of {where} from GitHub ({(r.stderr or r.stdout).strip()[:200]})")
-        sha, branch = parts
+        try:
+            sha, branch = gh_api(root, f"repos/{api}/pulls/{number}", '.head.sha + " " + .head.ref').split()
+        except (NoHead, ValueError) as e:
+            raise NoHead(f"cannot read pull request #{number} of {where} from GitHub ({str(e)[:200]})") from None
     else:
         current = git(root, "branch", "--show-current") or ""
         branch = branch or current
@@ -82,11 +95,21 @@ def head_of(root: Path, how: str, number: str | None, branch: str | None, repo: 
             raise NoHead(f"the branch {branch!r} is not on {where}; push it first")
         if branch == current and git(root, "rev-parse", "HEAD") != sha:
             raise NoHead(f"the checkout's head of {branch!r} is not what {where} has ({sha[:12]}); push or pull first")
+        owner = repo.split("/")[0] if repo else "{owner}"
+        number = gh_api(root, f"repos/{api}/pulls?head={owner}:{branch}&state=open", ".[0].number // empty").strip()
+        if not number:
+            raise NoHead(f"{where} has no open pull request for {branch!r}")
     if git(root, "cat-file", "-e", f"{sha}^{{commit}}") is None:
         git(root, "fetch", "-q", remote, f"refs/heads/{branch}")
         if git(root, "cat-file", "-e", f"{sha}^{{commit}}") is None:
             raise NoHead(f"the commit {sha[:12]} of {branch!r} is not in this checkout; fetch it first")
-    return sha, branch
+    return sha, branch, number
+
+
+def reviewed(root: Path, repo: str | None, number: str, sha: str) -> bool:
+    """Whether a comment on the pull request carries the review verdict for this commit."""
+    lines = gh_api(root, f"repos/{repo or '{owner}/{repo}'}/issues/{number}/comments", '.[].body | split("\\n")[0] | rtrimstr("\\r")')
+    return f"foreman review: ready {sha}" in lines.splitlines()
 
 
 def task_file(root: Path, sha: str, branch: str) -> tuple[str, str] | None:
@@ -111,8 +134,12 @@ def main(p):
     if not found:
         return
     root, conf = found
+    if target[0] == "new":
+        deny("Blocked: this opens a pull request ready for review. A new pull request cannot carry the review "
+             "verdict the ready gate needs, so open it as a draft (--draft, or draft true) and mark it ready after "
+             "the coordinator's review pass.")
     try:
-        sha, branch = head_of(root, *target)
+        sha, branch, number = head_of(root, *target)
     except NoHead as e:
         deny(f"Blocked: this marks a pull request ready, and {e}.")
     missing = []
@@ -126,9 +153,16 @@ def main(p):
         if state not in ("done", "review"):
             missing.append(f"the task file {task[0]} has State {state!r} at {sha[:12]}: "
                            f"propose completion with '- State: done' (or review) and fill its Evidence")
+    try:
+        if not reviewed(root, target[3], number, sha):
+            missing.append(f"pull request #{number} has no review verdict for {sha[:12]}: the coordinator's review pass "
+                           f"posts a comment whose first line is 'foreman review: ready {sha}' when no finding blocks "
+                           f"(a verdict for another commit does not count, so a push after the review needs a new one)")
+    except NoHead as e:
+        deny(f"Blocked: this marks a pull request ready, and {e}.")
     if missing:
         deny("Blocked: this marks a pull request ready, and the ready gate is not met.\n- " + "\n- ".join(missing)
-             + "\nKeep it a draft until both hold.")
+             + "\nKeep it a draft until all three hold.")
 
 
 if __name__ == "__main__":

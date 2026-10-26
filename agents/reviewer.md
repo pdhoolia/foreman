@@ -12,4 +12,7 @@ and run the checks yourself when you can.
 
 Report numbered findings, most serious first. Each finding names the file and line,
 what is wrong, and what would fix it. End with one line: "ready" when nothing blocks
-the PR, else "not ready" and the numbers of the findings that block it.
+the PR, else "not ready" and the numbers of the findings that block it. When it is
+ready, post the verdict on the PR as the `review` skill says: a comment whose first
+line is exactly `foreman review: ready <full head sha>`. That comment is the only
+write you make, and the ready gate hook needs it before the PR can be marked ready.

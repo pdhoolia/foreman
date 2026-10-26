@@ -105,6 +105,7 @@ The page's tests also use `node` when it is installed.
   "checks": "scripts/local-checks.sh",
   "jargon": ["upsert", "idempotent"],
   "branch_prefixes": ["bot"],
+  "commit_authors": ["Alice <12345+alice@users.noreply.github.com>"],
   "tracks": [
     {"slug": "bench", "lanes": [
       {"key": "A", "name": "search bench", "work": "score search ideas offline",
@@ -130,7 +131,11 @@ The page's tests also use `node` when it is installed.
 - `jargon`: words the plain-language hook warns about, for example `["upsert"]`.
   Without it, the hook warns only on long sentences.
 - `branch_prefixes`: more harness prefixes to refuse, besides `claude/`, `codex/`,
-  `deepseek/`, `cursor/` and `copilot/`, for example `["bot"]`.
+  `deepseek/`, `cursor/` and `copilot/`, for example `["bot"]`. The commit author hook
+  refuses the same names as an author's name.
+- `commit_authors`: who may author a commit, as `Name <email>` strings. With exactly one
+  entry, every session sets it as the author at start. Without the key, only the agent
+  names and domains are refused.
 
 ## Roles
 
@@ -140,7 +145,7 @@ The page's tests also use `node` when it is installed.
 | Track coordinator | Owns one track's `plan.md` and task files. Dispatches its tasks, reviews its PRs before the owner sees them, asks the owner through cards, refreshes the control room. | Edits another track's files or the program files. |
 | Program session | Owns `docs/program.md` and `docs/sdlc.md`. Watches merges, brings open PRs back onto `main` after each merge, records answered rounds, settles conflicts between tracks. | Does task work. |
 | Developer | Delivers one task in its own checkout and branch, in one PR that proposes the task `done`. | Changes paths its task file does not own. |
-| Reviewer | Reads a PR against its task file and sends findings to the developer. | Writes to the PR. |
+| Reviewer | Reads a PR against its task file and sends findings to the developer. Posts the review verdict as a PR comment. | Writes to the PR's branch. |
 | Scribe | Writes records (decision rounds, handoffs, plain-words lines) from given facts. | Edits code. |
 
 A coordinator holds no state outside the repository and the control room's store. Any
@@ -207,9 +212,19 @@ A task is `done` only when its PR is merged. On a branch, `done` is a proposal.
 
 - Branch names: `<git-handle>/<short-kebab-description>`. Never an agent prefix.
 - One writer per branch and checkout.
+- The author of every commit is the owner's identity, never an agent's. The committer
+  may be the platform's signing identity (in a cloud session, `Claude
+  <noreply@anthropic.com>`): that is what makes GitHub show the commit Verified, since
+  the signing key is known under that account. A commit made through the GitHub MCP
+  tools takes the signed-in account, so only a local `git commit` is guarded.
 - One PR per task, against `main`, opened as a draft and marked ready only when the
-  project's checks pass. The body says the problem, what changes, how it was tested
-  (every check that ran, and any that could not), and what is not done.
+  project's checks pass on its head, its task file proposes `done`, and the
+  coordinator's review pass has posted its verdict for that head (a comment on the PR
+  whose first line is `foreman review: ready <full head sha>`). A push after the review
+  needs a new verdict. A coordinator reviews its own PR (a plan or record change) the
+  same way and posts the verdict comment on it before marking it ready. The body says
+  the problem, what changes, how it was tested (every check that ran, and any that
+  could not), and what is not done.
 - The same PR fills the task file's Evidence and Handoff sections and proposes its
   `State: done`.
 - Run the project's checks before every push. A check that cannot run is named in the
@@ -256,7 +271,7 @@ section gives the reading lines: each bullet that starts with a bold sentence.
 | `pm-start track <slug>` / `pm-start program` | build a session's brief: goal, done when, budget, each task's state, what is blocked, open PRs, unanswered cards, the next action |
 | `pm-handoff <slug>` | write the plan's "Handoff and memory" section, bump `Updated`, refresh |
 | `dispatch <task file>` | check a task is ready, record the dispatch, write the developer's brief |
-| `review <PR>` | the read-only review pass and the ready gate |
+| `review <PR>` | the review pass, its verdict comment and the ready gate |
 | `inputs ask \| review \| record` | ask the owner, read the answers back, record the round |
 | `refresh [own track slugs]` | regenerate the control room's files and print the publish parameters |
 
@@ -354,13 +369,16 @@ suggestion.
 `hooks/hooks.json` wires the rules above so that they run on their own. A hook that
 blocks tells the agent what is missing; the agent fixes it and tries again. Outside a
 project with a `foreman.json`, only the store check and the two session-link guards run.
+Claude Code's own `attribution` and `includeCoAuthoredBy` settings shape commit message
+text, not git's author, so no hook reads them.
 
 | Hook | When | What it does | How to satisfy it |
 | --- | --- | --- | --- |
 | `store_shape.py` | before an ArtifactData write | Blocks a `set`, `update` or `batch` write to `questions`, `answers`, `labels` or `events` that does not match `scripts/store-schema.json`, and names the wrong or missing fields. An `update` may leave fields out but not delete a required one; `str_replace` may change only a plain text field. | Build the document with `control_room.py card` or `event` and write what it prints. |
-| `ready_gate.py` | before `gh pr ready`, `gh pr create` without `--draft`, or a GitHub MCP create or update of a pull request with draft false | Blocks the ready mark unless the checks passed on the pull request's head commit and its branch's task file says `State: done` or `review` at that commit. | Commit and push, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"`, and propose `done` in the task file. Or open the pull request as a draft. |
+| `ready_gate.py` | before `gh pr ready`, `gh pr create` without `--draft`, or a GitHub MCP create or update of a pull request with draft false | Blocks the ready mark unless, for the pull request's head commit, the checks passed, its branch's task file says `State: done` or `review`, and a comment on the pull request carries the review verdict `foreman review: ready <full head sha>` as its first line. A new pull request has no comment yet, so it must be opened as a draft. | Commit and push, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"`, propose `done` in the task file, and ask the coordinator for the review pass. Or open the pull request as a draft. |
 | `refresh_after_pr.py` | after `gh pr create\|ready\|edit\|merge\|close` or a GitHub MCP pull request write | Runs the control room refresh into `<git dir>/foreman/control-room/` (owning the `tracks` this branch's commits change; none on `main`) and tells the agent what to publish. After a merge GitHub confirms (`gh api .../pulls/<n> --jq .merged`; `--auto` only queues one), it also prints the pull request event to write, and runs `scripts/rebase-open-prs.sh`. It owns only tracks listed in `foreman.json`. A track listed nowhere there stays as published; refresh it by hand with the `refresh` skill. | Nothing to satisfy. Publish what it prints; send each conflict it lists to that pull request's developer. |
 | `branch_name.py` | at session start, and before `git commit` or `git push` | Warns at start, then blocks a commit or push on a branch with a harness prefix (`claude/`, `codex/`, `deepseek/`, `cursor/`, `copilot/`, or one in `branch_prefixes`; in any case, so `Claude/` too), and a push to such a branch (`git push origin HEAD:claude/x`). Deleting such a branch (`git push origin --delete claude/x`) passes. | Rename with the `git branch -m` command it prints. It suggests your git handle in lower case, or `<your-git-handle>` when that handle is itself a harness name. |
+| `commit_author.py` | at session start, and before `git commit` | At start, with exactly one entry in `commit_authors`, sets `user.name` and `user.email` in the checkout from it, and in a cloud session (`CLAUDE_CODE_REMOTE`) keeps the committer `Claude <noreply@anthropic.com>` through `CLAUDE_ENV_FILE`; with no entry or several, prints the `git config` commands instead. Before a commit, blocks when the author git will use (`git var GIT_AUTHOR_IDENT`, then `--author`) has a harness name (`claude`, `codex`, `deepseek`, `cursor`, `copilot`, or one in `branch_prefixes`) or an email at an agent maker's domain, or is not in `commit_authors` when that list exists. The committer is not checked. | Set the author with `git config user.name` and `user.email`, or add the author to `commit_authors`. |
 | `task_shape.py` | before `git commit` | Blocks a commit whose task file lacks `State`, `Track`, `Issue / PR`, `Branch` or `Updated`, or has an unknown state word; or whose plan lacks `Coordinator`, `Done when` or `Budget`. It checks what the commit takes: the staged files, and with `-a` or named paths, the working tree. `docs/tracks/_templates/` is skipped, and so is every plan and task file of a track whose plan says `complete`, `accepted` or `dropped`. | Add the line it names. |
 | `plain_language.py` | before a `gh` or GitHub MCP write of a pull request, issue or comment body | Warns, never blocks, on a `jargon` word or a sentence over 35 words. | Rewrite the words or the sentence it prints. |
 | `session-link-gh.sh`, `session-link-mcp.sh` | before a `gh` write, and before a GitHub MCP write | Blocks text that carries a link to an agent session, a `Co-authored-by:` line for an agent, or a "Generated with" footer for one. Blocks every write when its patterns file is missing. | Remove it and send again. |
@@ -371,20 +389,23 @@ the head commit at `<git dir>/foreman/checks/<commit>`. `<git dir>` is the git d
 all of the repository's worktrees share. A new commit needs a new run.
 
 The ready gate asks GitHub for the commit being marked. For a pull request named by number
-(`gh pr ready 12`, an MCP update), it reads the head with `gh api`. For a new pull request,
-it reads the branch's head with `git ls-remote`; when that branch is checked out, the
-checkout's head must be the same commit. A repository named in the call (`owner` and
-`repo` on an MCP write, `-R` on gh) is the one asked. It reads the task file at that
-commit. The task file check looks only at
+(`gh pr ready 12`, an MCP update), it reads the head with `gh api`. For one named by
+branch (`gh pr ready`, `gh pr ready <branch>`), it reads the branch's head with
+`git ls-remote` and finds the open pull request's number with `gh api`; when that branch
+is checked out, the checkout's head must be the same commit. A repository named in the
+call (`owner` and `repo` on an MCP write, `-R` on gh) is the one asked. It reads the task
+file at that commit. The task file check looks only at
 `docs/tracks/*/tasks/*.md` files whose `- Branch:` names the pull request's branch; a
-branch no task file names is not checked. A head it cannot find, or a `foreman.json` it
-cannot read, blocks the ready mark.
+branch no task file names is not checked. The verdict is read from the pull request's
+issue comments (`gh api repos/{owner}/{repo}/issues/<n>/comments`); only a comment whose
+first line is exactly `foreman review: ready <full head sha>` counts. A head it cannot
+find, comments it cannot read, or a `foreman.json` it cannot read, blocks the ready mark.
 
 A hook that crashes does not let the action through: a blocking hook blocks with the
 error, and a warning hook prints it. Hook input that is not a JSON object counts as an
 error. When `foreman.json` cannot be read, each hook that reads it says so instead of
-going quiet; the ready gate blocks. A `jargon` or `branch_prefixes` that is not a list of
-strings is ignored, with a warning.
+going quiet; the ready gate blocks. A `jargon`, `branch_prefixes` or `commit_authors` that
+is not a list of strings is ignored, with a warning.
 
 ## Layout and tests
 
