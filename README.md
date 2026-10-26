@@ -170,7 +170,9 @@ review verdicts and ready marks then count as self-approval and are refused, eve
 finished PR falls back to the owner's click, its permission prompts go to the other
 session, and the control room looks out of step with what that session says. The
 `coordinators` skill starts each coordinator in a new terminal. When it cannot, it says
-so and prints the prompt the owner pastes into a new session.
+so and prints the prompt the owner pastes into a new session. The skill writes the prompt
+to a file and types only a short command that reads it: a terminal's input line takes at
+most 1024 characters, so a longer typed prompt was cut off and no session started.
 
 **No shortcut that changes who does what.** A session that cannot do a step as written
 here says so and asks the owner. It does not swap in a shortcut that changes who does the
