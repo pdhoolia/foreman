@@ -26,6 +26,8 @@ project's root. Keep scratch files in your scratchpad, never in the repository.
      with `review`, ask the owner with `inputs`, publish with `refresh`.
    - **Program session.** Do only what "Only the program session does" lists. Record
      every answered round under "Answered, not yet recorded" with the `inputs` skill.
+     Start the coordinators that "Coordinators to start" lists and that are not running
+     with the `coordinators` skill. Each is its own session, never a subagent of this one.
 6. A line that says "missing from the plan head" is a gap: add the `Coordinator`,
    `Done when` or `Budget` line to the plan (track) or ask the track's coordinator to
    (program).

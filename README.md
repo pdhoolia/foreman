@@ -133,6 +133,9 @@ The page's tests also use `node` when it is installed.
 - `branch_prefixes`: more harness prefixes to refuse, besides `claude/`, `codex/`,
   `deepseek/`, `cursor/` and `copilot/`, for example `["bot"]`. The commit author hook
   refuses the same names as an author's name.
+- `program`: the program session's brief, when it is not `docs/program.md`. A code span
+  in that file that starts with "Coordinate the <slug> track" is the first prompt of each
+  track coordinator, with `<slug>` filled in. Without one, the plugin's own line is used.
 - `commit_authors`: who may author a commit, as `Name <email>` strings. With exactly one
   entry, every session sets it as the author at start. Without the key, only the agent
   names and domains are refused.
@@ -150,6 +153,19 @@ The page's tests also use `node` when it is installed.
 
 A coordinator holds no state outside the repository and the control room's store. Any
 session can take its role over from the files.
+
+**A track coordinator is its own Claude Code session**, never a subagent of the program
+session or of another coordinator. A subagent acts as the session that started it. Its
+review verdicts and ready marks then count as self-approval and are refused, every
+finished PR falls back to the owner's click, its permission prompts go to the other
+session, and the control room looks out of step with what that session says. The
+`coordinators` skill starts each coordinator in a new terminal. When it cannot, it says
+so and prints the prompt the owner pastes into a new session.
+
+**No shortcut that changes who does what.** A session that cannot do a step as written
+here says so and asks the owner. It does not swap in a shortcut that changes who does the
+work, who reviews it, or where permission is asked. In the owner's words: "do not
+automatically default to taking a shortcut which then has other side-effects".
 
 ## The conventions
 
@@ -221,9 +237,10 @@ A task is `done` only when its PR is merged. On a branch, `done` is a proposal.
   project's checks pass on its head, its task file proposes `done`, and the
   coordinator's review pass has posted its verdict for that head (a comment on the PR
   whose first line is `foreman review: ready <full head sha>`). A push after the review
-  needs a new verdict. A coordinator reviews its own PR (a plan or record change) the
-  same way and posts the verdict comment on it before marking it ready. The body says
-  the problem, what changes, how it was tested (every check that ran, and any that
+  needs a new verdict. No session reviews its own PR. A coordinator's own PR (a plan or
+  record change) is reviewed by the program session, and the program session's by a
+  coordinator or the owner; the reviewer posts the verdict comment the same way. The
+  body says the problem, what changes, how it was tested (every check that ran, and any that
   could not), and what is not done.
 - The same PR fills the task file's Evidence and Handoff sections and proposes its
   `State: done`.
@@ -274,6 +291,7 @@ section gives the reading lines: each bullet that starts with a bold sentence.
 | `review <PR>` | the review pass, its verdict comment and the ready gate |
 | `inputs ask \| review \| record` | ask the owner, read the answers back, record the round |
 | `refresh [own track slugs]` | regenerate the control room's files and print the publish parameters |
+| `coordinators [track slugs]` | start each active track's coordinator as its own session in a new terminal, or say why not and print the prompts to paste |
 
 ## The control room
 
@@ -411,7 +429,7 @@ is not a list of strings is ignored, with a warning.
 
 ```text
 .claude-plugin/   plugin.json, marketplace.json
-skills/           the six skills
+skills/           the seven skills
 agents/           developer, reviewer, scribe
 scripts/          control_room.py, store-schema.json, control-room/ (the page), control-room-refresh.sh, open-prs.sh, rebase-open-prs.sh, check.sh
 templates/        plan, task, record, sample review spec, program, sdlc

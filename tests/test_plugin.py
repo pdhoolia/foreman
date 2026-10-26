@@ -21,7 +21,7 @@ REFRESH = ROOT / 'scripts/control-room-refresh.sh'
 CHECK = ROOT / 'scripts/control-room/check.cjs'
 NODE = shutil.which('node')
 CLAUDE = shutil.which('claude')
-SKILLS = {'pm-start', 'pm-handoff', 'dispatch', 'review', 'inputs', 'refresh'}
+SKILLS = {'pm-start', 'pm-handoff', 'dispatch', 'review', 'inputs', 'refresh', 'coordinators'}
 
 PLAN = """# Garden planner
 
