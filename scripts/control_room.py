@@ -624,6 +624,49 @@ def task_lines(root: Path, state: dict, track: dict) -> tuple[list[str], list[st
     return lines, blocked
 
 
+def next_action(root: Path, state: dict, tr: dict) -> str | None:
+    """A track's next action: the plan's Handoff "Next action", else the planned tasks whose
+    dependencies are all done ("dispatch ..."), else None."""
+    nxt = bullets(section((root / tr["path"]).read_text(encoding="utf-8"), "Handoff and memory")).get("Next action")
+    if nxt:
+        return strip_md(nxt)
+    by = {t["anchor"]: t for t in state["tasks"]}
+    ready = [by[a] for a in tr["tasks"] if by[a]["state"] == "planned" and all(by[d]["state"] in DONE_STATES for d in by[a]["deps"])]
+    return "dispatch " + ", ".join(t["id"] + (f" (branch {t['branch']})" if t["branch"] else "") for t in ready) if ready else None
+
+
+# The line that starts a track coordinator. A project may write its own in its program file
+# (foreman.json "program", else docs/program.md) as a code span that starts with
+# "Coordinate the <slug> track"; `<slug>` is then filled in. Otherwise this one is used.
+COORDINATOR_LINE = ("Coordinate the <slug> track. Read {read}, then do the plan's next step. "
+                    "You own only that track's plan and task files; the program session owns everything else. "
+                    "Refresh and publish the control room before you report anything.")
+
+
+def program_file(root: Path) -> str:
+    return read_config(root).get("program") or "docs/program.md"
+
+
+def coordinator_prompts(root: Path, state: dict | None = None) -> list[dict]:
+    """One first prompt per active track that has a next action: the coordinator line with the
+    track's slug, then at most two sentences of the next action."""
+    root = root.resolve()
+    state = state or collect(root)
+    program = program_file(root)
+    text = (root / program).read_text(encoding="utf-8") if (root / program).is_file() else ""
+    own = next(iter(re.findall(r"`(Coordinate the <slug> track[^`]*)`", text)), None)
+    out = []
+    for tr in state["tracks"]:
+        nxt = None if tr["done"] else next_action(root, state, tr)
+        if not nxt:
+            continue
+        read = [f for f in (program, "docs/sdlc.md") if (root / f).is_file()] + [tr["path"]]
+        line = own or COORDINATOR_LINE.format(read=", ".join(read[:-1]) + " and " + read[-1] if len(read) > 1 else read[0])
+        sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9(])", "Next action in the plan: " + nxt.rstrip(".") + ".")
+        out.append({"slug": tr["slug"], "prompt": line.replace("<slug>", tr["slug"]) + " " + " ".join(sentences[:2])})
+    return out
+
+
 def open_cards(store: dict | None, task_ids: set[str] | None) -> list[dict]:
     answers = (store or {}).get("answers") or {}
     return [q for q in (store or {}).get("questions") or [] if not (answers.get(q["id"]) or {}).get("choice")
@@ -634,7 +677,7 @@ def brief(root: Path, scope: str, slug: str | None = None, prs: list[dict] | Non
     """The starting brief of a track coordinator (`track`) or of the program session (`program`)."""
     root = root.resolve()
     state = collect(root, prs)
-    read = [f for f in ("docs/program.md", "docs/sdlc.md") if (root / f).is_file()]
+    read = [f for f in (program_file(root), "docs/sdlc.md") if (root / f).is_file()]
     active = [tr for tr in state["tracks"] if not tr["done"]]
     out = []
     if scope == "track":
@@ -645,9 +688,7 @@ def brief(root: Path, scope: str, slug: str | None = None, prs: list[dict] | Non
         lines, blocked = task_lines(root, state, tr)
         ids = {t["id"] for t in state["tasks"] if t["track"] == slug}
         mine = [p for p in state["prs"] if p["task"] in tr["tasks"]]
-        nxt = bullets(section(text, "Handoff and memory")).get("Next action")
-        ready = [t["id"] for t in state["tasks"] if t["track"] == slug and t["state"] == "planned"
-                 and all(next(o for o in state["tasks"] if o["anchor"] == d)["state"] in DONE_STATES for d in t["deps"])]
+        nxt = next_action(root, state, tr)
         out += [f"# Brief: track {slug}, {tr['title']}", "",
                 "Read first: " + ", ".join(read + [tr["path"]] + [t["task_file"] for t in state["tasks"] if t["track"] == slug and t["task_file"]]), "",
                 f"- Goal: {first_paragraph(section(text, 'Goal and boundaries')) or 'no Goal and boundaries section'}",
@@ -658,7 +699,7 @@ def brief(root: Path, scope: str, slug: str | None = None, prs: list[dict] | Non
                 "## Blocked", *(blocked or ["- nothing"]), "",
                 "## Open pull requests", *([f"- #{p['number']} {p['title']} ({'ready' if p['state'] == 'ready' else 'draft'})" for p in mine] or ["- none"] if prs is not None else ["- not read: pass --prs"]), "",
                 "## Unanswered decision cards", *([f"- {q['id']}: {q.get('title', '')} (for {q.get('task')})" for q in open_cards(store, ids)] or ["- none"] if store is not None else ["- not read: pass --store"]), "",
-                "## Next action", "- " + (strip_md(nxt) if nxt else f"dispatch {', '.join(ready)}" if ready else "none written; read the plan")]
+                "## Next action", "- " + (nxt or "none written; read the plan")]
     else:
         out += ["# Brief: program", "", "Read first: " + ", ".join(read + [tr["path"] for tr in active]), "", "## Active tracks"]
         all_blocked = []
@@ -679,6 +720,10 @@ def brief(root: Path, scope: str, slug: str | None = None, prs: list[dict] | Non
         out += ["", "## Blocked", *(all_blocked or ["- nothing"]), "",
                 "## Pull requests outside every task", *([f"- #{p['number']} {p['title']}" for p in loose] or ["- none"] if prs is not None else ["- not read: pass --prs"]), "",
                 "## Answered, not yet recorded under docs/inputs/", *([f"- {a}" for a in answered] or ["- none"] if store is not None else ["- not read: pass --store"]), "",
+                "## Coordinators to start",
+                "Each coordinator is its own Claude Code session in this repository, never a subagent of this one. "
+                "Start the ones not running with the `coordinators` skill, or paste a line into a new session.",
+                *([f"- {c['prompt']}" for c in coordinator_prompts(root, state)] or ["- none: no active track has a next action"]), "",
                 "## Only the program session does", *[f"- {d}" for d in PROGRAM_DUTIES]]
     return "\n".join(out) + "\n"
 
