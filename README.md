@@ -154,6 +154,16 @@ The page's tests also use `node` when it is installed.
 A coordinator holds no state outside the repository and the control room's store. Any
 session can take its role over from the files.
 
+**Every session has a name**: its intent, then its role. With several windows open, the
+name says which session does what.
+
+| Session | Name | Set by |
+| --- | --- | --- |
+| Program session | `program: <title> (PM)`, the `title` from `foreman.json` | `/rename` in the session (`pm-start`) |
+| Track coordinator | `<slug> (PM)` | `claude --name` (`coordinators`) |
+| Developer | `task <ID>: <short title> (developer)` | `claude --name`, or the Agent tool's description (`dispatch`) |
+| Review pass in its own session | `review #<PR> (reviewer)` | `claude --name` |
+
 **A track coordinator is its own Claude Code session**, never a subagent of the program
 session or of another coordinator. A subagent acts as the session that started it. Its
 review verdicts and ready marks then count as self-approval and are refused, every

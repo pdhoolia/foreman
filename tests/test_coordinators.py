@@ -2,8 +2,9 @@
 program brief, and the `coordinators` skill's starter.
 
 The project is a copy of the invented recipe app under tests/fixtures/control-room/repo,
-with two active tracks that have a next action and one finished track. `claude`,
-`osascript` and `tmux` are stubs that record their arguments, so no test opens a terminal.
+with two active tracks that have a next action and one finished track, made a git checkout
+so the starter has a place for its prompt files. `claude`, `osascript` and `tmux` are stubs
+that record their arguments, so no test opens a terminal.
 """
 import os
 import shlex
@@ -64,21 +65,30 @@ class CoordinatorTests(unittest.TestCase):
         plan.write_text(plan.read_text(encoding='utf-8').replace('\n## Closure', BENCH_NEXT + '\n## Closure'), encoding='utf-8')
         task = self.proj / 'docs/tracks/widgets/tasks/W01-list-model.md'  # W01 done: W02 is ready to dispatch
         task.write_text(task.read_text(encoding='utf-8').replace('- State: active', '- State: done'), encoding='utf-8')
+        subprocess.run(['git', 'init', '-q', str(self.proj)], check=True,
+                       env={k: v for k, v in os.environ.items() if not k.startswith('GIT_')})
         self.bin = d / 'bin'
         self.bin.mkdir()
         stub(self.bin, 'claude')
 
+    def prompt_file(self, slug):
+        return self.proj.resolve() / '.git/foreman/prompts' / f'{slug}.txt'
+
+    def typed(self, slug):
+        """What the starter types: claude with the session's name, reading the prompt file."""
+        return f'claude --name {shlex.quote(slug + " (PM)")} "$(cat {shlex.quote(str(self.prompt_file(slug)))})"'
+
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_py(self, *args, **env_over):
+    def run_py(self, *args, code=0, **env_over):
         env = {k: v for k, v in os.environ.items()
                if not k.startswith('GIT_') and k not in ('TMUX', 'FOREMAN_TERMINAL', 'CLAUDE_CODE_REMOTE', 'TERM_PROGRAM')}
         env['PATH'] = f'{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin'
         env.update(env_over)
         r = subprocess.run([sys.executable, '-I', *map(str, args)], cwd=self.proj, env=env, capture_output=True, text=True)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        return r.stdout
+        self.assertEqual(r.returncode, code, r.stderr)
+        return r.stdout if code == 0 else r.stderr
 
     def start(self, *args, **env):
         return self.run_py(START, '--root', '.', *args, **env)
@@ -137,9 +147,13 @@ class CoordinatorTests(unittest.TestCase):
         made = calls(self.bin, 'osascript')
         self.assertEqual(len(made), 2)
         root = shlex.quote(str(self.proj.resolve()))
-        self.assertEqual([c[-1] for c in made], [f'cd {root} && claude {shlex.quote(BENCH)}', f'cd {root} && claude {shlex.quote(WIDGETS)}'])
+        self.assertEqual([c[-1] for c in made], [f'cd {root} && {self.typed("bench")}', f'cd {root} && {self.typed("widgets")}'])
         self.assertIn('tell application "Terminal"', made[0])
-        self.assertEqual(shlex.split(made[0][-1])[-1], BENCH)  # the shell gets the prompt back as one argument
+        self.assertEqual(self.prompt_file('bench').read_text(encoding='utf-8'), BENCH)
+        self.assertEqual(self.prompt_file('widgets').read_text(encoding='utf-8'), WIDGETS)
+        # the shell gives claude the name and the file's text, each as one argument
+        out = subprocess.run(['bash', '-c', made[0][-1].replace(' claude ', ' printf "%s\\n" ', 1)], capture_output=True, text=True).stdout
+        self.assertEqual(out, f'--name\nbench (PM)\n{BENCH}\n')
 
     def test_one_track_and_iterm(self):
         stub(self.bin, 'osascript')
@@ -147,14 +161,15 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(out, 'Started the widgets coordinator in a new iTerm2 window.\n')
         made = calls(self.bin, 'osascript')
         self.assertIn('tell application "iTerm"', made[0])
-        self.assertTrue(made[0][-1].endswith(f'claude {shlex.quote(WIDGETS)}'))
+        self.assertTrue(made[0][-1].endswith(self.typed('widgets')))
 
     def test_inside_tmux_it_opens_a_tmux_window(self):
         stub(self.bin, 'tmux')
         stub(self.bin, 'osascript')
         out = self.start('--track', 'bench', TMUX='/tmp/tmux-1/default,1,0')
         self.assertEqual(out, 'Started the bench coordinator in a new tmux window.\n')
-        self.assertEqual(calls(self.bin, 'tmux'), [['new-window', '-c', str(self.proj.resolve()), '-n', 'bench', 'claude ' + shlex.quote(BENCH)]])
+        self.assertEqual(calls(self.bin, 'tmux'), [['new-window', '-c', str(self.proj.resolve()), '-n', 'bench', self.typed('bench')]])
+        self.assertEqual(self.prompt_file('bench').read_text(encoding='utf-8'), BENCH)
         self.assertEqual(calls(self.bin, 'osascript'), [])
 
     def test_a_later_failure_prints_only_the_prompts_left(self):
@@ -166,6 +181,35 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(lines[0], 'Started the bench coordinator in a new Terminal window.')
         self.assertTrue(lines[1].startswith('Could not start the coordinator session (osascript said: boom)'), lines[1])
         self.assertEqual(lines[2:], ['', WIDGETS, ''])
+
+    def test_a_long_prompt_goes_through_a_file_and_the_typed_command_stays_short(self):
+        stub(self.bin, 'osascript')
+        line = BENCH.split(' Next action')[0]
+        long = ' '.join(['Decision D9 reopened the bench track; plan the next step — “ü” included.'] * 60)[:4000 - len(line) - 2] + '.'
+        prompt = f'{line} {long}'
+        self.assertEqual(len(prompt), 4000)
+        self.start('--track', 'bench', '--next', long, FOREMAN_TERMINAL='terminal')
+        typed = calls(self.bin, 'osascript')[0][-1]
+        self.assertLess(len(typed.encode('utf-8')), 1024)
+        self.assertEqual(self.prompt_file('bench').read_bytes(), prompt.encode('utf-8'))  # byte for byte
+
+    def test_next_prompts_a_complete_track(self):
+        self.assertIn('No coordinator to start', self.start('--track', 'old', FOREMAN_TERMINAL='none'))  # complete: skipped
+        out = self.start('--track', 'old', '--next', 'Decision D7 reopened this track. Plan the fix  and dispatch it.', FOREMAN_TERMINAL='none')
+        self.assertEqual(out.split('\n')[2:], [
+            "Coordinate the old track. Read docs/program.md and docs/tracks/old/plan.md, then do the plan's next step. "
+            "You own only that track's plan and task files; the program session owns everything else. "
+            "Refresh and publish the control room before you report anything. "
+            "Decision D7 reopened this track. Plan the fix and dispatch it.", ''])
+        stub(self.bin, 'osascript')
+        self.assertEqual(self.start('--track', 'old', '--next', 'Go.', FOREMAN_TERMINAL='terminal'),
+                         'Started the old coordinator in a new Terminal window.\n')
+        self.assertTrue(self.prompt_file('old').read_text(encoding='utf-8').endswith('anything. Go.'))
+
+    def test_next_needs_exactly_one_track(self):
+        self.assertIn('--next needs exactly one --track', self.run_py(START, '--root', '.', '--next', 'Go.', code=2))
+        self.assertIn('--next needs exactly one --track', self.run_py(START, '--root', '.', '--track', 'old', 'bench', '--next', 'Go.', code=2))
+        self.assertIn("no track 'nope'", self.run_py(START, '--root', '.', '--track', 'nope', '--next', 'Go.', code=2))
 
     def test_the_skill_never_starts_a_subagent(self):
         skill = (ROOT / 'skills/coordinators/SKILL.md').read_text(encoding='utf-8')

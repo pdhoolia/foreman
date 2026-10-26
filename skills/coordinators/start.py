@@ -2,11 +2,17 @@
 """Start one track coordinator per active track as its own Claude Code session.
 
     python3 start.py [--root DIR] [--track SLUG ...]
+    python3 start.py [--root DIR] --track SLUG --next "<one or two sentences>"
 
 For each active track with a next action (as `control_room.py brief program` reads them),
-it opens a new terminal that runs `claude "<the track's prompt>"` at the project's root:
-a new tmux window when this runs inside tmux, else on macOS a new Terminal or iTerm2
-window through osascript. When it cannot (a cloud session, no tmux and no macOS, the
+it opens a new terminal that runs `claude --name "<slug> (PM)" "<the track's prompt>"` at
+the project's root: a new tmux window when this runs inside tmux, else on macOS a new
+Terminal or iTerm2 window through osascript. The prompt goes through a file,
+<git common dir>/foreman/prompts/<slug>.txt, because a terminal's input line takes at most
+1024 characters; the typed command only reads that file.
+
+With --next, the one track named is prompted even when its plan is complete or has no next
+action (a decision reopened it): the coordinator line, then the given sentences. When it cannot (a cloud session, no tmux and no macOS, the
 terminal automation refused or failed), it prints one line that says so and then each
 prompt left, for the owner to paste into a new session by hand.
 
@@ -53,14 +59,30 @@ def pick() -> tuple[str | None, str]:
     return None, "no tmux session and no macOS terminal to open"
 
 
+def prompt_file(root: Path, slug: str, prompt: str) -> Path | None:
+    """Write the prompt to <git common dir>/foreman/prompts/<slug>.txt, outside the work tree
+    so it is never committed. None when root is not a git checkout."""
+    r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode or not r.stdout.strip():
+        return None
+    f = Path(r.stdout.strip()) / "foreman" / "prompts" / f"{slug}.txt"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(prompt.encode("utf-8"))
+    return f
+
+
 def start(way: str, root: Path, slug: str, prompt: str) -> str:
     """Open one terminal; return '' when it opened, else why not."""
+    f = prompt_file(root, slug, prompt)
+    if f is None:
+        return f"{root} is not a git checkout, so there is no place for the prompt file"
+    run = f'claude --name {shlex.quote(slug + " (PM)")} "$(cat {shlex.quote(str(f))})"'
     if way == "tmux":
-        cmd = ["tmux", "new-window", "-c", str(root), "-n", slug, "claude " + shlex.quote(prompt)]
+        cmd = ["tmux", "new-window", "-c", str(root), "-n", slug, run]
     else:
         script = ITERM if way == "iterm" else TERMINAL
-        line = f"cd {shlex.quote(str(root))} && claude {shlex.quote(prompt)}"
-        cmd = ["osascript", *[a for s in script for a in ("-e", s)], line]
+        cmd = ["osascript", *[a for s in script for a in ("-e", s)], f"cd {shlex.quote(str(root))} && {run}"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -75,9 +97,20 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=".")
     ap.add_argument("--track", nargs="+", default=[], help="only these track slugs")
+    ap.add_argument("--next", help="prompt the one --track even if complete, with these sentences as the context")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve()
-    prompts = [p for p in control_room.coordinator_prompts(root) if not args.track or p["slug"] in args.track]
+    if args.next is not None:
+        if len(args.track) != 1:
+            ap.error("--next needs exactly one --track")
+        if not args.next.strip():
+            ap.error("--next needs one or two sentences")
+        tr = next((t for t in control_room.collect(root)["tracks"] if t["slug"] == args.track[0]), None)
+        if tr is None:
+            ap.error(f"no track {args.track[0]!r} under docs/tracks/")
+        prompts = [{"slug": tr["slug"], "prompt": control_room.coordinator_line(root, tr) + " " + " ".join(args.next.split())}]
+    else:
+        prompts = [p for p in control_room.coordinator_prompts(root) if not args.track or p["slug"] in args.track]
     if not prompts:
         print("No coordinator to start: no active track has a next action" + (" among " + ", ".join(args.track) if args.track else "") + ".")
         return 0
