@@ -221,8 +221,10 @@ A task is `done` only when its PR is merged. On a branch, `done` is a proposal.
   project's checks pass on its head, its task file proposes `done`, and the
   coordinator's review pass has posted its verdict for that head (a comment on the PR
   whose first line is `foreman review: ready <full head sha>`). A push after the review
-  needs a new verdict. The body says the problem, what changes, how it was tested
-  (every check that ran, and any that could not), and what is not done.
+  needs a new verdict. A coordinator reviews its own PR (a plan or record change) the
+  same way and posts the verdict comment on it before marking it ready. The body says
+  the problem, what changes, how it was tested (every check that ran, and any that
+  could not), and what is not done.
 - The same PR fills the task file's Evidence and Handoff sections and proposes its
   `State: done`.
 - Run the project's checks before every push. A check that cannot run is named in the

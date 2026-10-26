@@ -85,7 +85,7 @@ class ScratchRepo(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.d = Path(self.tmp.name)
+        self.d = Path(self.tmp.name).resolve()  # git prints the resolved path (/private/var on macOS)
         self.repo = self.d / 'pantry'
         self.write({'foreman.json': json.dumps(FOREMAN), 'docs/tracks/shelves/plan.md': PLAN,
                     'scripts/checks.sh': 'test ! -f fail-checks\n'})
