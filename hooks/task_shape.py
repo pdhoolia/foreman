@@ -3,7 +3,8 @@
 head lines the tools read ("Task file bullets" and "Plan head lines" in the plugin's README).
 
 It checks what the commit takes: the staged files, and with `-a` or named paths, those
-files as they are in the working tree.
+files as they are in the working tree. A plan or task file of a finished track (its plan
+says `complete`, `accepted` or `dropped`) is history and is not checked.
 """
 import re
 
@@ -13,7 +14,8 @@ TASK = re.compile(r"docs/tracks/(?!_templates/)[^/]+/tasks/[^/]+\.md")
 PLAN = re.compile(r"docs/tracks/(?!_templates/)[^/]+/plan\.md")
 TASK_LINES = ["State", "Track", "Issue / PR", "Branch", "Updated"]
 PLAN_LINES = ["Coordinator", "Done when", "Budget"]
-STATES = {"planned", "active", "blocked", "review", "done", "dropped"}
+STATES = {"planned", "active", "blocked", "review", "done", "accepted", "dropped"}
+FINISHED = {"complete", "accepted", "dropped"}
 
 
 def head(text: str) -> dict:
@@ -26,13 +28,17 @@ def head(text: str) -> dict:
     return lines
 
 
+def state(lines: dict) -> str:
+    return (re.findall(r"[a-z]+", lines.get("State", "").lower()) or [""])[0]
+
+
 def problems(path: str, text: str) -> list[str]:
     lines = head(text)
     if PLAN.fullmatch(path):
         return [f"{path}: no '- {k}:' line in the head" for k in PLAN_LINES if k not in lines]
     found = [f"{path}: no '- {k}:' line in the head" for k in TASK_LINES if k not in lines]
     if "State" in lines:
-        word = (re.findall(r"[a-z]+", lines["State"].lower()) or [""])[0]
+        word = state(lines)
         if word not in STATES:
             found.append(f"{path}: state {word!r} is not one of {', '.join(sorted(STATES))}")
     return found
@@ -86,7 +92,10 @@ def main(p):
     errors = []
     for path, text in sorted(files.items()):
         if TASK.fullmatch(path) or PLAN.fullmatch(path):
-            errors += problems(path, text)
+            plan = "/".join(path.split("/")[:3]) + "/plan.md"
+            plan_text = files[plan] if plan in files else git(root, "show", f":{plan}") or ""
+            if state(head(plan_text)) not in FINISHED:
+                errors += problems(path, text)
     if errors:
         deny("Blocked: a task file or plan in this commit lacks a line the tools read.\n- " + "\n- ".join(errors)
              + "\nAdd the missing lines (the templates under docs/tracks/_templates/ show them) and commit again.")

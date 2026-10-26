@@ -13,14 +13,21 @@ PREFIXES = ["claude/", "codex/", "deepseek/", "cursor/", "copilot/"]
 
 def harness_prefix(branch: str, conf: dict) -> str | None:
     prefixes = PREFIXES + [x if x.endswith("/") else x + "/" for x in words(conf, "branch_prefixes")]
-    return next((x for x in prefixes if branch.startswith(x)), None)
+    return next((x for x in prefixes if branch.lower().startswith(x.lower())), None)
+
+
+def suggested_handle(root, conf) -> str:
+    """The git handle, lower-cased; a placeholder when that is itself a harness prefix (a
+    container's default git name, such as Claude)."""
+    name = handle(root).lower()
+    return "<your-git-handle>" if harness_prefix(name + "/", conf) else name
 
 
 def warning(root, conf, branch: str) -> str | None:
     prefix = harness_prefix(branch, conf)
     if not prefix:
         return None
-    new = f"{handle(root)}/{branch[len(prefix):] or 'short-kebab-description'}"
+    new = f"{suggested_handle(root, conf)}/{branch[len(prefix):] or 'short-kebab-description'}"
     return (f"The branch {branch!r} has the harness prefix {prefix!r}, which the branch rule forbids "
             f"(<git-handle>/<short-kebab-description>). Rename it before you commit, and push that branch "
             f"instead: git branch -m {new}")
@@ -71,7 +78,7 @@ def main(p):
         bad = [d for d in push_destinations(words_after(cmd, m)) if harness_prefix(d, conf)]
         if bad:
             text = (f"This push writes to {', '.join(repr(d) for d in bad)}, a branch with a harness prefix, which the "
-                    f"branch rule forbids. Push to {handle(root)}/<short-kebab-description> instead.")
+                    f"branch rule forbids. Push to {suggested_handle(root, conf)}/<short-kebab-description> instead.")
     if text:
         deny("Blocked: " + text)
 

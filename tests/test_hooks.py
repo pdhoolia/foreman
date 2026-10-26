@@ -475,6 +475,18 @@ class BranchNameTests(ScratchRepo):
         self.assertEqual(r.returncode, 0)
         self.assertIn('foreman.json cannot be read', context_of(r))
 
+    def test_prefix_check_ignores_case_and_the_suggestion_is_lower_case(self):
+        self.git('config', 'user.name', 'Alice')
+        self.git('branch', '-m', 'Claude/shelf-model')
+        r = hook('branch_name.py', bash('git commit -m x', self.repo))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('git branch -m alice/shelf-model', r.stderr)
+        self.git('config', 'user.name', 'Claude')  # a container's default git name
+        r = hook('branch_name.py', bash('git commit -m x', self.repo))
+        self.assertIn('git branch -m <your-git-handle>/shelf-model', r.stderr)
+        self.git('branch', '-m', 'alice/Shelf-Model')
+        self.assertEqual(hook('branch_name.py', bash('git commit -m x', self.repo)).returncode, 0)
+
     def test_listed_prefixes_and_a_good_branch(self):
         self.assertEqual(hook('branch_name.py', bash('git commit -m x', self.repo)).returncode, 0)
         self.git('branch', '-m', 'bot/shelf-model')
@@ -498,6 +510,20 @@ class TaskShapeTests(ScratchRepo):
         self.assertEqual(r.returncode, 2)
         self.assertIn("state 'finished' is not one of", r.stderr)
         self.assertEqual(self.staged(path, TASK.format(state='review')).returncode, 0)
+        self.assertEqual(self.staged(path, TASK.format(state='accepted')).returncode, 0)
+
+    def test_a_finished_track_is_history(self):
+        plan = 'docs/tracks/shelves/plan.md'
+        bare = PLAN.replace('- Coordinator: the shelves track session\n', '').replace('- Budget: one developer session\n', '')
+        r = self.staged(plan, bare)  # an active track still needs its head lines
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(f"{plan}: no '- Coordinator:' line", r.stderr)
+        for word in ('complete', 'accepted', 'dropped'):
+            with self.subTest(state=word):
+                self.assertEqual(self.staged(plan, bare.replace('State: active', f'State: {word}')).returncode, 0)
+        self.commit('Close the shelves track')
+        old_task = TASK.format(state='finished').replace('- Updated: 2026-03-01\n', '')
+        self.assertEqual(self.staged('docs/tracks/shelves/tasks/S01-shelf-model.md', old_task).returncode, 0)
 
     def test_commit_all_and_named_paths_are_checked_from_the_working_tree(self):
         path = 'docs/tracks/shelves/tasks/S01-shelf-model.md'

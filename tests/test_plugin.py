@@ -107,7 +107,8 @@ def scratch_project(d: Path) -> Path:
     proj = d / 'garden'
     for path, text in {
         'foreman.json': json.dumps({'title': 'Garden Control Room', 'control_room_url': 'https://example.com/room',
-                                    'tracks': [{'slug': 'garden', 'lanes': [{'key': 'G', 'name': 'garden', 'model': 'Model Z'}]}]}),
+                                    'tracks': [{'slug': 'garden', 'lanes': [{'key': 'G', 'name': 'garden', 'model': 'Model Z'}]}],
+                                    'lanes': [{'key': 'PM', 'name': 'program'}]}),
         'docs/tracks/garden/plan.md': PLAN,
         'docs/tracks/garden/tasks/G01-bed-model.md': TASK,
         'docs/tracks/plain-words.md': PLAIN,
@@ -159,7 +160,8 @@ class ScratchProjectTests(unittest.TestCase):
     def test_refresh_end_to_end(self):
         printed, state = self.refresh('--all')
         self.assertIn('url:          https://example.com/room', printed)
-        self.assertEqual([(l['key'], l['model'], l['tasks']) for l in state['lanes']], [('G', 'Model Z', ['task-G01', 'task-G02'])])
+        self.assertEqual([(l['key'], l['model'], l['plan'], l['tasks']) for l in state['lanes']],
+                         [('G', 'Model Z', 'docs/tracks/garden/plan.md', ['task-G01', 'task-G02']), ('PM', None, None, [])])  # PM: a lane outside a track
         tasks = {t['anchor']: t for t in state['tasks']}
         self.assertEqual((tasks['task-G01']['state'], tasks['task-G01']['branch']), ('active', 'alice/bed-model'))
         self.assertEqual(tasks['task-G02']['deps'], ['task-G01'])
