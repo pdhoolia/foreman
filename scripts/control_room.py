@@ -164,13 +164,14 @@ def read_config(root: Path) -> dict:
 
 
 def read_lanes(root: Path, config: dict) -> list[dict]:
-    """Lanes from foreman.json: each track lists its lanes; a lane links its track's plan."""
+    """Lanes from foreman.json: each track lists its lanes; a lane links its track's plan.
+    A top-level "lanes" list holds lanes outside any track, which link no plan."""
     lanes = []
-    for tr in config.get("tracks") or []:
-        plan = f"docs/tracks/{tr['slug']}/plan.md"
+    for tr in [*(config.get("tracks") or []), {"lanes": config.get("lanes")}]:
+        plan = f"docs/tracks/{tr['slug']}/plan.md" if tr.get("slug") else ""
         for lane in tr.get("lanes") or []:
             lanes.append({"key": lane["key"], "name": lane.get("name", ""), "work": lane.get("work", ""),
-                          "where": lane.get("where", ""), "plan": plan if (root / plan).is_file() else None,
+                          "where": lane.get("where", ""), "plan": plan if plan and (root / plan).is_file() else None,
                           "model": lane.get("model")})
     return lanes
 

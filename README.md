@@ -17,27 +17,77 @@ here instead of repeating them.
 
 ## Install
 
-Add this repository as a plugin marketplace, then install the plugin:
+### On your machine
 
-```text
-/plugin marketplace add pdhoolia/foreman
-/plugin install foreman@foreman
+Add this repository as a plugin marketplace, then install the plugin. From a shell:
+
+```bash
+claude plugin marketplace add pdhoolia/foreman
+claude plugin install foreman@foreman
 ```
 
-From a local checkout instead: `/plugin marketplace add ./path/to/foreman`, then the
-same install line. To try it for one session without installing:
+Inside a Claude Code session, the same two steps are
+`/plugin marketplace add pdhoolia/foreman` and `/plugin install foreman@foreman`.
+From a local checkout instead: `claude plugin marketplace add ./path/to/foreman`, then
+the same install line. To try it for one session without installing:
 `claude --plugin-dir ./path/to/foreman`.
 
 The skills are then named `/foreman:<skill>`, for example `/foreman:pm-start`.
 
+### For the team
+
+Commit these two keys in the project's `.claude/settings.json`. Claude Code then offers
+the plugin to everyone who opens the project and trusts the folder:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "foreman": {"source": {"source": "github", "repo": "pdhoolia/foreman"}}
+  },
+  "enabledPlugins": {"foreman@foreman": true}
+}
+```
+
+### In a cloud session
+
+A cloud session (Claude Code on the web) does not load a plugin that only the
+repository's settings enable. Install it at user scope in the cloud environment's setup
+script, which runs before the session starts. A setup script that fails stops the
+session from starting, so each line ends with `|| true`:
+
+```bash
+claude plugin marketplace add pdhoolia/foreman || true
+claude plugin install foreman@foreman --scope user || true
+```
+
+### Where the installed plugin lives
+
+Inside a session, hooks and skills name the plugin's folder `${CLAUDE_PLUGIN_ROOT}`.
+Outside a session that variable is not set: the installed copy is at
+`~/.claude/plugins/cache/foreman/foreman/<version>/` (`<version>` is the `version` in
+`.claude-plugin/plugin.json`, for example `0.1.0`). The steps below call that folder
+`<plugin>`.
+
 ## Set up a project
 
 1. Add `foreman.json` at the project's root (shape below).
-2. Copy the templates you need from `templates/`: `program.md` and `sdlc.md` to
+2. Copy the templates you need from `<plugin>/templates/`: `program.md` and `sdlc.md` to
    `docs/`, `plan.md` and `task.md` to `docs/tracks/_templates/`, `record.md` to
    `docs/inputs/_template/`.
 3. Write the first track plan at `docs/tracks/<slug>/plan.md`.
-4. Publish the control room (see "The control room").
+4. Make the first control room files. From the project's root, inside or outside a
+   session:
+
+   ```bash
+   bash <plugin>/scripts/control-room-refresh.sh \
+     "$(git rev-parse --path-format=absolute --git-common-dir)/foreman/control-room" --all
+   ```
+
+   `--all` is for the first publish only. Every later refresh merges into the published
+   page, so it first needs the published `state.json` saved as `live-state.json` in that
+   folder; without it the script stops with "save the published state.json ... first".
+   Saving it and publishing both use Claude's Artifact tool, so they happen inside a
+   session (the `refresh` skill does both). See "The control room".
 
 The tools need `python3`, `git` and `gh` (signed in to the project's GitHub account).
 They call GitHub's REST API through `gh api` (`scripts/open-prs.sh`), which works where
@@ -59,6 +109,9 @@ The page's tests also use `node` when it is installed.
       {"key": "A", "name": "search bench", "work": "score search ideas offline",
        "where": "local", "model": "the model and effort this lane runs on"}
     ]}
+  ],
+  "lanes": [
+    {"key": "PM", "name": "program", "work": "ties the tracks together"}
   ]
 }
 ```
@@ -68,6 +121,8 @@ The page's tests also use `node` when it is installed.
 - `tracks`: the lanes of each track. A lane's key is a task ID prefix: task `A01` goes
   to lane `A`, `CS01` to lane `CS` or else `C`. A track with no lanes listed shows as
   one row of its own.
+- `lanes`: lanes outside any track, for example the program session's. Same shape as a
+  track's lanes; the page shows them with no plan link.
 - `checks`: the project's checks, a script path (run with bash) or a shell command,
   for example `"scripts/local-checks.sh"`. `scripts/check.sh` runs it for the ready
   gate. Without it, the ready gate checks only the task file.
@@ -132,8 +187,8 @@ critical path.
 
 ### Task file bullets
 
-- `- State:` `planned`, `active`, `blocked`, `review`, `done` or `dropped`. The first
-  word counts.
+- `- State:` `planned`, `active`, `blocked`, `review`, `done`, `accepted` or `dropped`.
+  The first word counts. `accepted` is an older word for `done`.
 - `- Track:` a link to the track's plan.
 - `- Issue / PR:` a link, or "not created".
 - `- Owner / run label:` who runs the task: the model, the effort and where it runs, or
@@ -303,9 +358,9 @@ project with a `foreman.json`, only the store check and the two session-link gua
 | --- | --- | --- | --- |
 | `store_shape.py` | before an ArtifactData write | Blocks a `set`, `update` or `batch` write to `questions`, `answers`, `labels` or `events` that does not match `scripts/store-schema.json`, and names the wrong or missing fields. An `update` may leave fields out but not delete a required one; `str_replace` may change only a plain text field. | Build the document with `control_room.py card` or `event` and write what it prints. |
 | `ready_gate.py` | before `gh pr ready`, `gh pr create` without `--draft`, or a GitHub MCP create or update of a pull request with draft false | Blocks the ready mark unless the checks passed on the pull request's head commit and its branch's task file says `State: done` or `review` at that commit. | Commit and push, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"`, and propose `done` in the task file. Or open the pull request as a draft. |
-| `refresh_after_pr.py` | after `gh pr create\|ready\|edit\|merge\|close` or a GitHub MCP pull request write | Runs the control room refresh into `<git dir>/foreman/control-room/` (owning the `tracks` this branch's commits change; none on `main`) and tells the agent what to publish. After a merge GitHub confirms (`gh api .../pulls/<n> --jq .merged`; `--auto` only queues one), it also prints the pull request event to write, and runs `scripts/rebase-open-prs.sh`. | Nothing to satisfy. Publish what it prints; send each conflict it lists to that pull request's developer. |
-| `branch_name.py` | at session start, and before `git commit` or `git push` | Warns at start, then blocks a commit or push on a branch with a harness prefix (`claude/`, `codex/`, `deepseek/`, `cursor/`, `copilot/`, or one in `branch_prefixes`), and a push to such a branch (`git push origin HEAD:claude/x`). Deleting such a branch (`git push origin --delete claude/x`) passes. | Rename with the `git branch -m` command it prints. |
-| `task_shape.py` | before `git commit` | Blocks a commit whose task file lacks `State`, `Track`, `Issue / PR`, `Branch` or `Updated`, or has an unknown state word; or whose plan lacks `Coordinator`, `Done when` or `Budget`. It checks what the commit takes: the staged files, and with `-a` or named paths, the working tree. `docs/tracks/_templates/` is skipped. | Add the line it names. |
+| `refresh_after_pr.py` | after `gh pr create\|ready\|edit\|merge\|close` or a GitHub MCP pull request write | Runs the control room refresh into `<git dir>/foreman/control-room/` (owning the `tracks` this branch's commits change; none on `main`). It owns only tracks listed in `foreman.json`: a branch that changes a track listed nowhere there leaves it as published, so refresh that one by hand with the `refresh` skill and tells the agent what to publish. After a merge GitHub confirms (`gh api .../pulls/<n> --jq .merged`; `--auto` only queues one), it also prints the pull request event to write, and runs `scripts/rebase-open-prs.sh`. | Nothing to satisfy. Publish what it prints; send each conflict it lists to that pull request's developer. |
+| `branch_name.py` | at session start, and before `git commit` or `git push` | Warns at start, then blocks a commit or push on a branch with a harness prefix (`claude/`, `codex/`, `deepseek/`, `cursor/`, `copilot/`, or one in `branch_prefixes`; in any case, so `Claude/` too), and a push to such a branch (`git push origin HEAD:claude/x`). Deleting such a branch (`git push origin --delete claude/x`) passes. | Rename with the `git branch -m` command it prints. It suggests your git handle in lower case, or `<your-git-handle>` when that handle is itself a harness name. |
+| `task_shape.py` | before `git commit` | Blocks a commit whose task file lacks `State`, `Track`, `Issue / PR`, `Branch` or `Updated`, or has an unknown state word; or whose plan lacks `Coordinator`, `Done when` or `Budget`. It checks what the commit takes: the staged files, and with `-a` or named paths, the working tree. `docs/tracks/_templates/` is skipped, and so is every plan and task file of a track whose plan says `complete`, `accepted` or `dropped`. | Add the line it names. |
 | `plain_language.py` | before a `gh` or GitHub MCP write of a pull request, issue or comment body | Warns, never blocks, on a `jargon` word or a sentence over 35 words. | Rewrite the words or the sentence it prints. |
 | `session-link-gh.sh`, `session-link-mcp.sh` | before a `gh` write, and before a GitHub MCP write | Blocks text that carries a link to an agent session, a `Co-authored-by:` line for an agent, or a "Generated with" footer for one. Blocks every write when its patterns file is missing. | Remove it and send again. |
 
