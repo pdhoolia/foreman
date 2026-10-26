@@ -56,16 +56,18 @@ CODEX = 'https://chatgpt.com/codex/tasks/pantry-7'
 
 def env(extra_path=None):
     e = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
-    e.update({'GIT_AUTHOR_NAME': 'Alice', 'GIT_AUTHOR_EMAIL': '7+alice@users.noreply.github.com',
-              'GIT_COMMITTER_NAME': 'Alice', 'GIT_COMMITTER_EMAIL': '7+alice@users.noreply.github.com'})
+    e.update({'GIT_AUTHOR_NAME': 'alice', 'GIT_AUTHOR_EMAIL': 'alice@example.invalid',
+              'GIT_COMMITTER_NAME': 'alice', 'GIT_COMMITTER_EMAIL': 'alice@example.invalid'})
     if extra_path:
         e['PATH'] = f'{extra_path}{os.pathsep}{e["PATH"]}'
     return e
 
 
 def hook(name, payload, cwd='.', path=None):
+    """Run a hook script with `payload` as its stdin: JSON-encoded, unless it is already a string."""
     run = ['bash'] if name.endswith('.sh') else [sys.executable]
-    r = subprocess.run([*run, str(HOOKS / name)], input=json.dumps(payload), cwd=cwd, env=env(path),
+    stdin = payload if isinstance(payload, str) else json.dumps(payload)
+    r = subprocess.run([*run, str(HOOKS / name)], input=stdin, cwd=cwd, env=env(path),
                        capture_output=True, text=True, timeout=120)
     return r
 
@@ -88,7 +90,8 @@ class ScratchRepo(unittest.TestCase):
         self.write({'foreman.json': json.dumps(FOREMAN), 'docs/tracks/shelves/plan.md': PLAN,
                     'scripts/checks.sh': 'test ! -f fail-checks\n'})
         self.git('init', '-q', '-b', 'main')
-        self.git('config', 'user.email', '7+alice@users.noreply.github.com')
+        self.git('config', 'user.email', 'alice@example.invalid')
+        self.git('config', 'user.name', 'alice')
         self.commit('Start the pantry')
         self.git('init', '-q', '--bare', str(self.d / 'origin.git'), cwd=self.d)
         self.git('remote', 'add', 'origin', str(self.d / 'origin.git'))
@@ -121,12 +124,20 @@ class ScratchRepo(unittest.TestCase):
         self.git('push', '-q', '-u', 'origin', 'HEAD')
 
     def gh_stub(self):
-        """A gh that answers a pull request read with self.d/pr-head ("<sha> <branch>"), lists no open
-        pull requests, and fails every call while self.d/gh-fails exists."""
+        """A gh that logs each call to self.d/gh-calls and answers from files: a merged question with
+        self.d/pr-merged (else false), a pull request search with self.d/pr-number, a pull request read
+        with self.d/pr-head ("<sha> <branch>"). It lists no open pull requests, and fails every call
+        while self.d/gh-fails exists."""
         self.bin = self.d / 'bin'
         self.bin.mkdir(exist_ok=True)
-        (self.bin / 'gh').write_text(f'#!/bin/sh\n[ -f "{self.d}/gh-fails" ] && {{ echo "HTTP 403" >&2; exit 1; }}\n'
-                                     f'case "$*" in *pulls/[0-9]*) cat "{self.d}/pr-head";; esac\n', encoding='utf-8')
+        d = self.d
+        (self.bin / 'gh').write_text(f'#!/bin/sh\necho "$*" >> "{d}/gh-calls"\n'
+                                     f'[ -f "{d}/gh-fails" ] && {{ echo "HTTP 403" >&2; exit 1; }}\n'
+                                     f'case "$*" in\n'
+                                     f'  *.merged*) cat "{d}/pr-merged" 2>/dev/null || echo false;;\n'
+                                     f'  *"pulls?head="*) cat "{d}/pr-number" 2>/dev/null;;\n'
+                                     f'  *pulls/[0-9]*) cat "{d}/pr-head";;\n'
+                                     f'esac\n', encoding='utf-8')
         (self.bin / 'gh').chmod(0o755)
 
     def pr_head(self, branch='alice/shelf-model'):
@@ -199,6 +210,14 @@ class StoreShapeTests(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn('must be a list', r.stderr)
 
+    def test_unreadable_input_denies(self):
+        for name in ('store_shape.py', 'ready_gate.py', 'branch_name.py', 'task_shape.py'):
+            for stdin in ('[1]', 'null', 'not json'):
+                with self.subTest(name=name, stdin=stdin):
+                    r = hook(name, stdin)
+                    self.assertEqual(r.returncode, 2)
+                    self.assertIn('cannot read its input', r.stderr)
+
     def test_a_crash_denies_instead_of_letting_the_write_through(self):
         r = hook('store_shape.py', {'tool_name': 'ArtifactData', 'tool_input': 'not an object'})
         self.assertEqual(r.returncode, 2)
@@ -267,10 +286,41 @@ class ReadyGateTests(ScratchRepo):
         self.commit('Propose the shelf model done')  # not pushed
         r = self.ready(bash('gh pr create --title "Add shelves" --body "Shelves."', self.repo))
         self.assertEqual(r.returncode, 2)
-        self.assertIn('is not pushed', r.stderr)
+        self.assertIn("is not what origin has", r.stderr)
         self.assertEqual(self.check().returncode, 0)
         self.push()
         self.assertEqual(self.ready(bash('gh pr create --title "Add shelves" --body "Shelves."', self.repo)).returncode, 0)
+
+    def test_a_new_pull_request_is_checked_against_github_not_the_last_fetch(self):
+        self.write({'docs/tracks/shelves/tasks/S01-shelf-model.md': TASK.format(state='done')})
+        self.commit('Propose the shelf model done')
+        self.assertEqual(self.check().returncode, 0)
+        self.push()
+        other = self.d / 'other'  # another clone pushes a commit with no marker, State active
+        self.git('clone', '-q', '-b', 'alice/shelf-model', str(self.d / 'origin.git'), str(other), cwd=self.d)
+        (other / 'docs/tracks/shelves/tasks/S01-shelf-model.md').write_text(TASK.format(state='active'), encoding='utf-8')
+        self.git('-c', 'commit.gpgsign=false', 'commit', '-q', '-am', 'Reopen the shelf model', cwd=other)
+        self.git('push', '-q', 'origin', 'alice/shelf-model', cwd=other)
+        r = self.ready(bash('gh pr create --title "Add shelves" --body "Shelves."', self.repo))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("is not what origin has", r.stderr)
+        self.git('checkout', '-q', 'main')
+        create = {'cwd': str(self.repo), 'tool_name': 'mcp__github__create_pull_request',
+                  'tool_input': {'head': 'alice/shelf-model', 'base': 'main', 'title': 'Add shelves'}}
+        r = self.ready(create)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('the checks have not passed', r.stderr)
+        self.assertIn("has State 'active'", r.stderr)
+
+    def test_the_repository_named_in_the_call_is_the_one_asked(self):
+        self.ready(bash('gh pr ready -R pantry/elsewhere 12', self.repo))
+        self.ready({'cwd': str(self.repo), 'tool_name': 'mcp__github__update_pull_request',
+                    'tool_input': {'owner': 'pantry', 'repo': 'other', 'pullNumber': 13, 'draft': False}})
+        calls = (self.d / 'gh-calls').read_text(encoding='utf-8')
+        self.assertIn('api repos/pantry/elsewhere/pulls/12', calls)
+        self.assertIn('api repos/pantry/other/pulls/13', calls)
+        self.ready()
+        self.assertIn('api repos/{owner}/{repo}/pulls/12', (self.d / 'gh-calls').read_text(encoding='utf-8'))
 
     def test_check_script_marks_only_a_clean_passing_head(self):
         self.write({'fail-checks': ''})
@@ -344,24 +394,28 @@ class RefreshAfterPrTests(ScratchRepo):
         self.write({'docs/tracks/shelves/plan.md': PLAN + '\nA note.\n'})  # not committed
         self.assertIn('(no own track)', self.post(bash('gh pr edit 12 --title "Shelves"', self.repo)))
 
-    def test_a_confirmed_merge_prints_the_event_and_rebases_open_prs(self):
-        text = self.post({'cwd': str(self.repo), 'tool_name': 'mcp__github__merge_pull_request', 'tool_input': {'pullNumber': 12}},
-                         {'merged': True, 'message': 'Pull Request successfully merged'})
-        event = json.loads(text.split('(set):\n\n')[1].split('\n\n')[0])
-        self.assertEqual((event['collection'], event['doc_id'], event['data']['state']), ('events', 'pr-12', 'merged'))
-        self.assertIn('on main: 0, rebased: 0, conflicts: 0', text)
-        text = self.post(bash('gh pr merge 12 --squash', self.repo), {'stdout': '', 'stderr': '✓ Squashed and merged pull request #12 (Add shelves)'})
-        self.assertIn('"doc_id": "pr-12"', text)
+    def test_a_merge_github_confirms_prints_the_event_and_rebases_open_prs(self):
+        (self.d / 'pr-merged').write_text('true\n', encoding='utf-8')
+        # gh prints nothing when its output is not a terminal, as under Claude Code.
+        for payload in ({'cwd': str(self.repo), 'tool_name': 'mcp__github__merge_pull_request', 'tool_input': {'pullNumber': 12}},
+                        bash('gh pr merge 12 --squash', self.repo)):
+            with self.subTest(payload=payload):
+                text = self.post(payload, {'stdout': '', 'stderr': ''})
+                event = json.loads(text.split('(set):\n\n')[1].split('\n\n')[0])
+                self.assertEqual((event['collection'], event['doc_id'], event['data']['state']), ('events', 'pr-12', 'merged'))
+                self.assertIn('on main: 0, rebased: 0, conflicts: 0', text)
+        (self.d / 'pr-number').write_text('14\n', encoding='utf-8')  # no number: the checked-out branch's pull request
+        text = self.post(bash('gh pr merge --squash', self.repo), {'stdout': '', 'stderr': ''})
+        self.assertIn('"doc_id": "pr-14"', text)
+        self.assertIn('pulls?head={owner}:alice/shelf-model&state=closed', (self.d / 'gh-calls').read_text(encoding='utf-8'))
 
-    def test_an_auto_merge_or_an_unconfirmed_one_is_not_a_merge(self):
-        text = self.post(bash('gh pr merge 12 --auto --squash', self.repo),
-                         {'stdout': '', 'stderr': '✓ Pull request #12 will be automatically merged via squash when all requirements are met'})
-        self.assertIn('Control room refresh', text)
-        self.assertNotIn('Merged', text)
-        self.assertNotIn('rebased:', text)
-        text = self.post(bash('gh pr merge 12', self.repo), {'stdout': '', 'stderr': 'X Pull request #12 is not mergeable'})
-        self.assertIn('not confirmed', text)
-        self.assertNotIn('rebased:', text)
+    def test_an_auto_merge_or_an_unmerged_one_is_not_a_merge(self):
+        for cmd in ('gh pr merge 12 --auto --squash', 'gh pr merge 12'):
+            with self.subTest(cmd=cmd):
+                text = self.post(bash(cmd, self.repo), {'stdout': '', 'stderr': ''})
+                self.assertIn('Control room refresh', text)
+                self.assertIn('GitHub does not show the pull request as merged', text)
+                self.assertNotIn('rebased:', text)
 
     def test_other_commands_and_other_projects_are_left_alone(self):
         self.assertEqual(self.post(bash('gh pr view 12', self.repo)), '')
@@ -399,6 +453,21 @@ class BranchNameTests(ScratchRepo):
         for prefix in ('cursor', 'copilot'):
             self.git('branch', '-m', f'{prefix}/shelf-model')
             self.assertEqual(hook('branch_name.py', bash('git commit -m x', self.repo)).returncode, 2)
+
+    def test_deleting_a_harness_branch_passes(self):
+        for cmd in ('git push origin --delete claude/shelf-model', 'git push -d origin codex/x', 'git push origin :claude/x'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(hook('branch_name.py', bash(cmd, self.repo)).returncode, 0)
+
+    def test_a_wrongly_typed_branch_prefixes_is_ignored_with_a_warning(self):
+        self.write({'foreman.json': json.dumps(dict(FOREMAN, branch_prefixes=5))})
+        r = hook('branch_name.py', bash('git commit -m x', self.repo))
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("'branch_prefixes' must be a list of strings", context_of(r))
+        self.git('branch', '-m', 'claude/shelf-model')
+        r = hook('branch_name.py', bash('git commit -m x', self.repo))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("'branch_prefixes' must be a list of strings", r.stderr)
 
     def test_an_unreadable_foreman_json_warns_instead_of_going_quiet(self):
         self.write({'foreman.json': '{"tracks": ['})
@@ -441,6 +510,8 @@ class TaskShapeTests(ScratchRepo):
                 self.assertEqual(r.returncode, 2)
                 self.assertIn(f"{path}: no '- Updated:' line", r.stderr)
         self.assertEqual(hook('task_shape.py', bash('git commit -m x docs/tracks/shelves/plan.md', self.repo)).returncode, 0)
+        r = hook('task_shape.py', bash('git commit -m "Shelves; and && more" -a', self.repo))  # separators inside quotes
+        self.assertEqual(r.returncode, 2)
 
     def test_plan_head_lines(self):
         r = self.staged('docs/tracks/shelves/plan.md', PLAN.replace('- Budget: one developer session\n', ''))
@@ -464,6 +535,19 @@ class PlainLanguageTests(ScratchRepo):
         r = hook('plain_language.py', {'cwd': str(self.repo), 'tool_name': 'mcp__github__add_issue_comment',
                                        'tool_input': {'issue_number': 3, 'body': 'The step is idempotent.'}})
         self.assertIn("jargon: 'idempotent'", context_of(r))
+
+    def test_a_wrongly_typed_jargon_is_ignored_with_a_warning(self):
+        self.write({'foreman.json': json.dumps(dict(FOREMAN, jargon='an'))})
+        text = context_of(hook('plain_language.py', bash('gh pr create --title "Add shelves" --body "An apple a day."', self.repo)))
+        self.assertIn("'jargon' must be a list of strings", text)
+        self.assertNotIn("jargon: 'a'", text)
+
+    def test_unreadable_input_is_reported_as_context(self):
+        for stdin in ('[1]', 'null', 'not json'):
+            with self.subTest(stdin=stdin):
+                r = hook('plain_language.py', stdin)
+                self.assertEqual(r.returncode, 0)
+                self.assertIn('cannot read its input', context_of(r))
 
     def test_a_crash_is_reported_as_context(self):
         r = hook('plain_language.py', {'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': 'not an object'})
@@ -500,16 +584,29 @@ class SessionLinkTests(unittest.TestCase):
         self.assertEqual(hook('session-link-gh.sh', bash("gh pr create --body 'A useful change'")).returncode, 0)
 
 
-    def test_a_missing_patterns_file_denies(self):
+    def guard(self, script, payload, path=None):
+        e = dict(os.environ, PATH=path) if path else None
+        return subprocess.run([shutil.which('bash'), script], input=json.dumps(payload), capture_output=True, text=True, env=e)
+
+    def test_a_missing_patterns_file_denies_github_writes_only(self):
         with tempfile.TemporaryDirectory() as d:
             for name in ('session-link-gh.sh', 'session-link-mcp.sh'):
                 shutil.copy(HOOKS / name, d)
-            r = subprocess.run(['bash', f'{d}/session-link-gh.sh'], input=json.dumps(bash("gh pr create --body 'Shelves.'")),
-                               capture_output=True, text=True)
+            r = self.guard(f'{d}/session-link-gh.sh', bash("gh pr create --body 'Shelves.'"))
             self.assertEqual(r.returncode, 2)
-            self.assertIn('cannot read', r.stderr)
-            r = subprocess.run(['bash', f'{d}/session-link-mcp.sh'], input='{"tool_input": {"body": "Shelves."}}', capture_output=True, text=True)
+            self.assertIn('cannot run', r.stderr)
+            self.assertEqual(self.guard(f'{d}/session-link-gh.sh', bash('ls -la')).returncode, 0)
+            self.assertEqual(self.guard(f'{d}/session-link-mcp.sh', {'tool_input': {'body': 'Shelves.'}}).returncode, 2)
+
+    def test_no_grep_denies_github_writes_only(self):
+        with tempfile.TemporaryDirectory() as d:  # a PATH with the tools the guards need, except grep
+            for tool in ('cat', 'dirname'):
+                os.symlink(shutil.which(tool), f'{d}/{tool}')
+            r = self.guard(str(HOOKS / 'session-link-gh.sh'), bash("gh pr create --body 'Shelves.'"), path=d)
             self.assertEqual(r.returncode, 2)
+            self.assertIn('needs grep', r.stderr)
+            self.assertEqual(self.guard(str(HOOKS / 'session-link-gh.sh'), bash('ls -la'), path=d).returncode, 0)
+            self.assertEqual(self.guard(str(HOOKS / 'session-link-mcp.sh'), {'tool_input': {'body': 'Shelves.'}}, path=d).returncode, 2)
 
 
 class WiringTests(unittest.TestCase):

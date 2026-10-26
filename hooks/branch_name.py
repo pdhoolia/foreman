@@ -6,13 +6,13 @@ PreToolUse on Bash: deny `git commit` and `git push` on such a branch, and a pus
 destination is such a branch (git push origin HEAD:claude/x), with the rename command.
 SessionStart: print the same warning, so the agent renames before it starts.
 """
-from common import bash_command, context, deny, git, git_dir_arg, handle, project, run, runs, words_after
+from common import bash_command, context, deny, git, git_dir_arg, handle, project, run, runs, words, words_after
 
 PREFIXES = ["claude/", "codex/", "deepseek/", "cursor/", "copilot/"]
 
 
 def harness_prefix(branch: str, conf: dict) -> str | None:
-    prefixes = PREFIXES + [x if x.endswith("/") else x + "/" for x in conf.get("branch_prefixes") or []]
+    prefixes = PREFIXES + [x if x.endswith("/") else x + "/" for x in words(conf, "branch_prefixes")]
     return next((x for x in prefixes if branch.startswith(x)), None)
 
 
@@ -27,7 +27,10 @@ def warning(root, conf, branch: str) -> str | None:
 
 
 def push_destinations(args: list[str]) -> list[str]:
-    """The branches a `git push <remote> <refspec>...` writes to."""
+    """The branches a `git push <remote> <refspec>...` writes to. A deletion (--delete, -d,
+    :<branch>) writes nothing: it is how a harness branch is cleaned up after the rename."""
+    if {"--delete", "-d"} & set(args):
+        return []
     VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
     positional, skip = [], False
     for a in args:
@@ -39,6 +42,8 @@ def push_destinations(args: list[str]) -> list[str]:
             positional.append(a)
     dests = []
     for spec in positional[1:]:
+        if spec.lstrip("+").startswith(":"):
+            continue
         dst = spec.lstrip("+").split(":")[-1]
         dests.append(dst.removeprefix("refs/heads/"))
     return [d for d in dests if d and d != "HEAD"]

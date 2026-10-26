@@ -12,9 +12,10 @@
 # 2 to block the call and feeds the reason back to the agent, which resubmits a clean body.
 payload="$(cat)"
 here="$(cd "$(dirname "$0")" && pwd)"
-# Without the patterns grep fails, and a failed grep would let every write through.
-if [ ! -r "$here/session-link.patterns" ]; then
-  echo "Blocked: the foreman plugin's session-link guard cannot read $here/session-link.patterns, so it cannot check this GitHub write. Restore the file (reinstall the plugin)." >&2
+# Without grep or the patterns the search fails, and a failed search would let every
+# write through.
+if [ ! -r "$here/session-link.patterns" ] || ! command -v grep >/dev/null 2>&1; then
+  echo "Blocked: the foreman plugin's session-link guard cannot run (it needs grep and $here/session-link.patterns), so it cannot check this GitHub write. Restore them (reinstall the plugin)." >&2
   exit 2
 fi
 

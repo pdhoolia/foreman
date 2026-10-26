@@ -4,8 +4,10 @@ write to questions, answers, labels or events that does not match scripts/store-
 
 `set` and every `set` of a `batch` must be a whole document. `update` merges fields, so a
 field it leaves out is not missing, but every field it names must be known and of the
-right type, and it may not delete a required field. `str_replace` may only change a plain
-text field. Reads, deletes and writes to other collections pass untouched.
+right type, and it may not delete a required field. The hook cannot read the stored
+document, so an update of `options` alone is not checked against the stored `recommended`.
+`str_replace` may only change a plain text field. Reads, deletes and writes to other
+collections pass untouched.
 """
 import json
 import sys

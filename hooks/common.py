@@ -24,23 +24,36 @@ class BadConfig(Exception):
     """foreman.json exists but cannot be read."""
 
 
+EVENT = "PreToolUse"
+WARNINGS: list[str] = []  # said with the hook's answer, whatever it is
+
+
 def run(main, blocking: bool) -> None:
-    """Run a hook's main(payload). A blocking hook denies on an unexpected error; a warning
-    hook, and any hook that meets an unreadable foreman.json, says so as context."""
-    try:
-        p = json.load(sys.stdin)
-    except ValueError:
-        p = {}
-    event = p.get("hook_event_name") or "PreToolUse"
+    """Run a hook's main(payload). A blocking hook denies on unreadable input or an
+    unexpected error; a warning hook says so as context, and so does any hook that meets an
+    unreadable foreman.json or a foreman.json key of the wrong type."""
+    global EVENT
     name = Path(sys.argv[0]).name
     try:
-        main(p)
+        p = json.load(sys.stdin)
+        if not isinstance(p, dict):
+            raise ValueError("it is not a JSON object")
+    except ValueError as e:
+        p, what = None, f"cannot read its input ({e})"
+    try:
+        if p is not None:
+            EVENT = p.get("hook_event_name") or EVENT
+            main(p)
     except BadConfig as e:
-        context(event, f"Warning from the foreman plugin's {name} hook: {e}. The hook did not check this call.")
+        context(EVENT, f"Warning from the foreman plugin's {name} hook: {e}. The hook did not check this call.")
     except Exception as e:  # noqa: BLE001: a crashed hook must not let the action through silently
+        p, what = None, f"failed ({type(e).__name__}: {e})"
+    if p is None:
         if blocking:
-            deny(f"Blocked: the foreman plugin's {name} hook failed ({type(e).__name__}: {e}). Fix the cause or report it.")
-        context(event, f"Warning: the foreman plugin's {name} hook failed ({type(e).__name__}: {e}).")
+            deny(f"Blocked: the foreman plugin's {name} hook {what}. Fix the cause or report it.")
+        context(EVENT, f"Warning: the foreman plugin's {name} hook {what}.")
+    if WARNINGS:
+        context(EVENT, "")
 
 
 def git(cwd, *args) -> str | None:
@@ -64,6 +77,15 @@ def project(p: dict, cwd=None) -> tuple[Path, dict] | None:
     return Path(root), conf
 
 
+def words(conf: dict, key: str) -> list[str]:
+    """A foreman.json key that holds a list of words. Any other value is ignored, with a warning."""
+    value = conf.get(key)
+    if value is None or isinstance(value, list) and all(isinstance(w, str) for w in value):
+        return [w for w in value or [] if w]
+    WARNINGS.append(f"foreman.json: {key!r} must be a list of strings, so it was ignored")
+    return []
+
+
 def git_common_dir(root) -> Path:
     """The repository's git directory, shared by all its worktrees."""
     return Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
@@ -80,12 +102,17 @@ def runs(command: str, tool: str, verbs: str) -> re.Match | None:
 
 
 def words_after(command: str, m: re.Match) -> list[str]:
-    """The arguments after the matched verb, up to the end of that simple command."""
-    rest = re.split(r"\s(?:&&|\|\||[;|&])\s|[;\n]", command[m.end():])[0]
+    """The arguments after the matched verb, up to the end of that simple command
+    (the first ;, &&, ||, | or & outside quotes)."""
+    rest = command[m.end():]
     try:
-        return shlex.split(rest)
+        lex = shlex.shlex(rest, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        tokens = list(lex)
     except ValueError:
-        return rest.split()
+        return re.split(r"\s(?:&&|\|\||[;|&])\s|[;\n]", rest)[0].split()
+    cut = next((i for i, t in enumerate(tokens) if t and set(t) <= set(";&|()")), len(tokens))
+    return tokens[:cut]
 
 
 def git_dir_arg(m: re.Match, cwd) -> str:
@@ -98,11 +125,12 @@ def git_dir_arg(m: re.Match, cwd) -> str:
 
 
 def deny(reason: str) -> None:
-    print(reason, file=sys.stderr)
+    print("\n".join(dict.fromkeys([reason, *WARNINGS])), file=sys.stderr)
     sys.exit(2)
 
 
 def context(event: str, text: str) -> None:
+    text = "\n".join(t for t in dict.fromkeys([text, *WARNINGS]) if t)
     print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}))
     sys.exit(0)
 

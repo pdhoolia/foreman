@@ -8,7 +8,7 @@ import re
 import shlex
 from pathlib import Path
 
-from common import bash_command, context, project, run, runs
+from common import bash_command, context, project, run, runs, words
 
 LONG = 35
 
@@ -58,7 +58,7 @@ def main(p):
     found = project(p) if text else None
     if not found:
         return
-    jargon = [w for w in found[1].get("jargon") or [] if isinstance(w, str) and w]
+    jargon = words(found[1], "jargon")
     lines = notes(text, jargon)
     if lines:
         context("PreToolUse", f"Plain words: this text may be hard to follow. Consider rewriting before or after it is posted "
