@@ -8,7 +8,7 @@ import re
 import shlex
 from pathlib import Path
 
-from common import bash_command, context, payload, project, runs
+from common import bash_command, context, project, run, runs
 
 LONG = 35
 
@@ -53,8 +53,7 @@ def notes(text: str, jargon: list[str]) -> list[str]:
     return found
 
 
-def main():
-    p = payload()
+def main(p):
     text = body(p)
     found = project(p) if text else None
     if not found:
@@ -67,4 +66,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    run(main, blocking=False)

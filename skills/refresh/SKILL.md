@@ -15,8 +15,10 @@ coordinators, one page" in `${CLAUDE_PLUGIN_ROOT}/README.md`):
 - `--all` takes every track from the checkout. Use it only for the first publish, or
   to recover a published state that is broken.
 
-Run from the project's root. `<out>` is a folder in your scratchpad; it never goes
-into git.
+Run from the project's root. `<out>` is the repository's own folder
+`$(git rev-parse --path-format=absolute --git-common-dir)/foreman/control-room`, the
+same one the refresh hook uses. It is inside the git directory, so it never goes into a
+commit, and each project has its own.
 
 1. **Bring in `main`** (`git fetch origin main && git merge origin/main`). Records
    under `docs/inputs/` and the lanes in `foreman.json` come from your checkout, and

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""A branch named by a harness (claude/, codex/, deepseek/, or a prefix foreman.json lists
-under branch_prefixes) breaks the branch rule in the plugin's README.
+"""A branch named by a harness (claude/, codex/, deepseek/, cursor/, copilot/, or a prefix
+foreman.json lists under branch_prefixes) breaks the branch rule in the plugin's README.
 
-PreToolUse on Bash: deny `git commit` and `git push` on such a branch, with the rename
-command. SessionStart: print the same warning, so the agent renames before it starts.
+PreToolUse on Bash: deny `git commit` and `git push` on such a branch, and a push whose
+destination is such a branch (git push origin HEAD:claude/x), with the rename command.
+SessionStart: print the same warning, so the agent renames before it starts.
 """
-from common import bash_command, context, deny, git, handle, payload, project, runs
+from common import bash_command, context, deny, git, git_dir_arg, handle, project, run, runs, words_after
 
-PREFIXES = ["claude/", "codex/", "deepseek/"]
+PREFIXES = ["claude/", "codex/", "deepseek/", "cursor/", "copilot/"]
 
 
-def warning(p: dict) -> str | None:
-    found = project(p)
-    if not found:
-        return None
-    root, conf = found
-    branch = git(root, "branch", "--show-current") or ""
+def harness_prefix(branch: str, conf: dict) -> str | None:
     prefixes = PREFIXES + [x if x.endswith("/") else x + "/" for x in conf.get("branch_prefixes") or []]
-    prefix = next((x for x in prefixes if branch.startswith(x)), None)
+    return next((x for x in prefixes if branch.startswith(x)), None)
+
+
+def warning(root, conf, branch: str) -> str | None:
+    prefix = harness_prefix(branch, conf)
     if not prefix:
         return None
     new = f"{handle(root)}/{branch[len(prefix):] or 'short-kebab-description'}"
@@ -26,17 +26,50 @@ def warning(p: dict) -> str | None:
             f"instead: git branch -m {new}")
 
 
-def main():
-    p = payload()
+def push_destinations(args: list[str]) -> list[str]:
+    """The branches a `git push <remote> <refspec>...` writes to."""
+    VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+    positional, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in VALUE:
+            skip = True
+        elif not a.startswith("-"):
+            positional.append(a)
+    dests = []
+    for spec in positional[1:]:
+        dst = spec.lstrip("+").split(":")[-1]
+        dests.append(dst.removeprefix("refs/heads/"))
+    return [d for d in dests if d and d != "HEAD"]
+
+
+def main(p):
     if p.get("hook_event_name") == "SessionStart":
-        text = warning(p)
-        if text:
-            context("SessionStart", text)
-    elif runs(bash_command(p), "git", "commit|push"):
-        text = warning(p)
-        if text:
-            deny("Blocked: " + text)
+        found = project(p)
+        if found:
+            text = warning(*found, git(found[0], "branch", "--show-current") or "")
+            if text:
+                context("SessionStart", text)
+        return
+    cmd = bash_command(p)
+    m = runs(cmd, "git", "commit|push")
+    if not m:
+        return
+    found = project(p, git_dir_arg(m, p.get("cwd") or "."))
+    if not found:
+        return
+    root, conf = found
+    branch = git(root, "branch", "--show-current") or ""
+    text = warning(root, conf, branch)
+    if not text and m.group(1) == "push":
+        bad = [d for d in push_destinations(words_after(cmd, m)) if harness_prefix(d, conf)]
+        if bad:
+            text = (f"This push writes to {', '.join(repr(d) for d in bad)}, a branch with a harness prefix, which the "
+                    f"branch rule forbids. Push to {handle(root)}/<short-kebab-description> instead.")
+    if text:
+        deny("Blocked: " + text)
 
 
 if __name__ == "__main__":
-    main()
+    run(main, blocking=True)

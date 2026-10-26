@@ -12,6 +12,11 @@
 # 2 to block the call and feeds the reason back to the agent, which resubmits a clean body.
 payload="$(cat)"
 here="$(cd "$(dirname "$0")" && pwd)"
+# Without the patterns grep fails, and a failed grep would let every write through.
+if [ ! -r "$here/session-link.patterns" ]; then
+  echo "Blocked: the foreman plugin's session-link guard cannot read $here/session-link.patterns, so it cannot check this GitHub write. Restore the file (reinstall the plugin)." >&2
+  exit 2
+fi
 
 if printf '%s' "$payload" | grep -qiE -f "$here/session-link.patterns"; then
   echo "Blocked: this GitHub write (pull request, issue, comment or review) carries a link to an agent session or an agent footer (a Co-authored-by line or 'Generated with ...'). Resubmit without them." >&2

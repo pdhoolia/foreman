@@ -73,8 +73,8 @@ The page's tests also use `node` when it is installed.
   gate. Without it, the ready gate checks only the task file.
 - `jargon`: words the plain-language hook warns about, for example `["upsert"]`.
   Without it, the hook warns only on long sentences.
-- `branch_prefixes`: more harness prefixes to refuse, besides `claude/`, `codex/` and
-  `deepseek/`, for example `["bot"]`.
+- `branch_prefixes`: more harness prefixes to refuse, besides `claude/`, `codex/`,
+  `deepseek/`, `cursor/` and `copilot/`, for example `["bot"]`.
 
 ## Roles
 
@@ -250,7 +250,7 @@ python3 scripts/control_room.py event pr <number> <open|ready|merged|closed> [--
 ### Publish a control room for a new project
 
 1. Run the `refresh` skill with `--all`. It writes `index.html` and
-   `state.json` to a folder in your scratchpad and prints the publish parameters.
+   `state.json` to `<git dir>/foreman/control-room/` and prints the publish parameters.
 2. **First publish**, with the Artifact tool: `file_path` the printed `index.html`,
    `files` `{"state.json": ...}`, `capabilities` `{"db": {}, "user": {}, "sample": {}}`
    and `icon` `dashboard`. The first publish needs all three: `db` holds the store,
@@ -301,23 +301,30 @@ project with a `foreman.json`, only the store check and the two session-link gua
 
 | Hook | When | What it does | How to satisfy it |
 | --- | --- | --- | --- |
-| `store_shape.py` | before an ArtifactData write | Blocks a `set`, `update` or `batch` write to `questions`, `answers`, `labels` or `events` that does not match `scripts/store-schema.json`, and names the wrong or missing fields. An `update` may leave fields out. | Build the document with `control_room.py card` or `event` and write what it prints. |
-| `ready_gate.py` | before `gh pr ready`, `gh pr create` without `--draft`, or a GitHub MCP create or update of a pull request with draft false | Blocks the ready mark unless the checks passed on the head and the branch's task file says `State: done` or `review`. | Commit, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"`, and propose `done` in the task file. Or open the pull request as a draft. |
-| `refresh_after_pr.py` | after `gh pr create\|ready\|edit\|merge\|close` or a GitHub MCP pull request write | Runs the control room refresh (owning the `tracks` this branch changes) and tells the agent what to publish. After a merge it also prints the pull request event to write, and runs `scripts/rebase-open-prs.sh`. | Nothing to satisfy. Publish what it prints; send each conflict it lists to that pull request's developer. |
-| `branch_name.py` | at session start, and before `git commit` or `git push` | Warns at start, then blocks a commit or push on a branch with a harness prefix (`claude/`, `codex/`, `deepseek/`, or one in `branch_prefixes`). | Rename with the `git branch -m` command it prints. |
-| `task_shape.py` | before `git commit` | Blocks a commit whose staged task file lacks `State`, `Track`, `Issue / PR`, `Branch` or `Updated`, or has an unknown state word; or whose staged plan lacks `Coordinator`, `Done when` or `Budget`. `docs/tracks/_templates/` is skipped. | Add the line it names. |
+| `store_shape.py` | before an ArtifactData write | Blocks a `set`, `update` or `batch` write to `questions`, `answers`, `labels` or `events` that does not match `scripts/store-schema.json`, and names the wrong or missing fields. An `update` may leave fields out but not delete a required one; `str_replace` may change only a plain text field. | Build the document with `control_room.py card` or `event` and write what it prints. |
+| `ready_gate.py` | before `gh pr ready`, `gh pr create` without `--draft`, or a GitHub MCP create or update of a pull request with draft false | Blocks the ready mark unless the checks passed on the pull request's head commit and its branch's task file says `State: done` or `review` at that commit. | Commit and push, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"`, and propose `done` in the task file. Or open the pull request as a draft. |
+| `refresh_after_pr.py` | after `gh pr create\|ready\|edit\|merge\|close` or a GitHub MCP pull request write | Runs the control room refresh into `<git dir>/foreman/control-room/` (owning the `tracks` this branch's commits change; none on `main`) and tells the agent what to publish. After a merge the tool's output confirms (not `--auto`), it also prints the pull request event to write, and runs `scripts/rebase-open-prs.sh`. | Nothing to satisfy. Publish what it prints; send each conflict it lists to that pull request's developer. |
+| `branch_name.py` | at session start, and before `git commit` or `git push` | Warns at start, then blocks a commit or push on a branch with a harness prefix (`claude/`, `codex/`, `deepseek/`, `cursor/`, `copilot/`, or one in `branch_prefixes`), and a push to such a branch (`git push origin HEAD:claude/x`). | Rename with the `git branch -m` command it prints. |
+| `task_shape.py` | before `git commit` | Blocks a commit whose task file lacks `State`, `Track`, `Issue / PR`, `Branch` or `Updated`, or has an unknown state word; or whose plan lacks `Coordinator`, `Done when` or `Budget`. It checks what the commit takes: the staged files, and with `-a` or named paths, the working tree. `docs/tracks/_templates/` is skipped. | Add the line it names. |
 | `plain_language.py` | before a `gh` or GitHub MCP write of a pull request, issue or comment body | Warns, never blocks, on a `jargon` word or a sentence over 35 words. | Rewrite the words or the sentence it prints. |
-| `session-link-gh.sh`, `session-link-mcp.sh` | before a `gh` write, and before a GitHub MCP write | Blocks text that carries a link to an agent session, a `Co-authored-by:` line for an agent, or a "Generated with" footer for one. | Remove it and send again. |
+| `session-link-gh.sh`, `session-link-mcp.sh` | before a `gh` write, and before a GitHub MCP write | Blocks text that carries a link to an agent session, a `Co-authored-by:` line for an agent, or a "Generated with" footer for one. Blocks every write when its patterns file is missing. | Remove it and send again. |
 
 `scripts/check.sh` runs the `checks` command at the checkout's root. It refuses to run
 with uncommitted changes to tracked files. When the checks pass, it leaves a marker for
-the head commit at `<git dir>/foreman/checks/<commit>`. A new commit needs a new run.
+the head commit at `<git dir>/foreman/checks/<commit>`. `<git dir>` is the git directory
+all of the repository's worktrees share. A new commit needs a new run.
 
-The ready gate reads the checkout's head and the task file as committed there. The task
-file check looks only at `docs/tracks/*/tasks/*.md` files whose `- Branch:` names the
-current branch; a branch no task file names is not checked. The task shape check sees
-what is staged when `git commit` starts, so files a `git commit -a` would add are not
-checked.
+The ready gate finds the commit being marked. For a pull request named by number (`gh pr
+ready 12`, an MCP update), it reads the head from GitHub with `gh api`. For a new pull
+request, it takes the pushed branch: the checkout's head must equal its upstream. It
+reads the task file at that commit. The task file check looks only at
+`docs/tracks/*/tasks/*.md` files whose `- Branch:` names the pull request's branch; a
+branch no task file names is not checked. A head it cannot find, or a `foreman.json` it
+cannot read, blocks the ready mark.
+
+A hook that crashes does not let the action through: a blocking hook blocks with the
+error, and a warning hook prints it. When `foreman.json` cannot be read, each hook that reads it says
+so instead of going quiet; the ready gate blocks.
 
 ## Layout and tests
 
