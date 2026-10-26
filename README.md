@@ -37,12 +37,13 @@ The skills are then named `/foreman:<skill>`, for example `/foreman:pm-start`.
 ### For the team
 
 Commit these two keys in the project's `.claude/settings.json`. Claude Code then offers
-the plugin to everyone who opens the project and trusts the folder:
+the plugin to everyone who opens the project and trusts the folder. `ref` pins the
+marketplace to a branch or tag; the plugin has no release tag yet, so it is `main`.
 
 ```json
 {
   "extraKnownMarketplaces": {
-    "foreman": {"source": {"source": "github", "repo": "pdhoolia/foreman"}}
+    "foreman": {"source": {"source": "github", "repo": "pdhoolia/foreman", "ref": "main"}}
   },
   "enabledPlugins": {"foreman@foreman": true}
 }
@@ -358,7 +359,7 @@ project with a `foreman.json`, only the store check and the two session-link gua
 | --- | --- | --- | --- |
 | `store_shape.py` | before an ArtifactData write | Blocks a `set`, `update` or `batch` write to `questions`, `answers`, `labels` or `events` that does not match `scripts/store-schema.json`, and names the wrong or missing fields. An `update` may leave fields out but not delete a required one; `str_replace` may change only a plain text field. | Build the document with `control_room.py card` or `event` and write what it prints. |
 | `ready_gate.py` | before `gh pr ready`, `gh pr create` without `--draft`, or a GitHub MCP create or update of a pull request with draft false | Blocks the ready mark unless the checks passed on the pull request's head commit and its branch's task file says `State: done` or `review` at that commit. | Commit and push, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"`, and propose `done` in the task file. Or open the pull request as a draft. |
-| `refresh_after_pr.py` | after `gh pr create\|ready\|edit\|merge\|close` or a GitHub MCP pull request write | Runs the control room refresh into `<git dir>/foreman/control-room/` (owning the `tracks` this branch's commits change; none on `main`). It owns only tracks listed in `foreman.json`: a branch that changes a track listed nowhere there leaves it as published, so refresh that one by hand with the `refresh` skill and tells the agent what to publish. After a merge GitHub confirms (`gh api .../pulls/<n> --jq .merged`; `--auto` only queues one), it also prints the pull request event to write, and runs `scripts/rebase-open-prs.sh`. | Nothing to satisfy. Publish what it prints; send each conflict it lists to that pull request's developer. |
+| `refresh_after_pr.py` | after `gh pr create\|ready\|edit\|merge\|close` or a GitHub MCP pull request write | Runs the control room refresh into `<git dir>/foreman/control-room/` (owning the `tracks` this branch's commits change; none on `main`) and tells the agent what to publish. After a merge GitHub confirms (`gh api .../pulls/<n> --jq .merged`; `--auto` only queues one), it also prints the pull request event to write, and runs `scripts/rebase-open-prs.sh`. It owns only tracks listed in `foreman.json`. A track listed nowhere there stays as published; refresh it by hand with the `refresh` skill. | Nothing to satisfy. Publish what it prints; send each conflict it lists to that pull request's developer. |
 | `branch_name.py` | at session start, and before `git commit` or `git push` | Warns at start, then blocks a commit or push on a branch with a harness prefix (`claude/`, `codex/`, `deepseek/`, `cursor/`, `copilot/`, or one in `branch_prefixes`; in any case, so `Claude/` too), and a push to such a branch (`git push origin HEAD:claude/x`). Deleting such a branch (`git push origin --delete claude/x`) passes. | Rename with the `git branch -m` command it prints. It suggests your git handle in lower case, or `<your-git-handle>` when that handle is itself a harness name. |
 | `task_shape.py` | before `git commit` | Blocks a commit whose task file lacks `State`, `Track`, `Issue / PR`, `Branch` or `Updated`, or has an unknown state word; or whose plan lacks `Coordinator`, `Done when` or `Budget`. It checks what the commit takes: the staged files, and with `-a` or named paths, the working tree. `docs/tracks/_templates/` is skipped, and so is every plan and task file of a track whose plan says `complete`, `accepted` or `dropped`. | Add the line it names. |
 | `plain_language.py` | before a `gh` or GitHub MCP write of a pull request, issue or comment body | Warns, never blocks, on a `jargon` word or a sentence over 35 words. | Rewrite the words or the sentence it prints. |
