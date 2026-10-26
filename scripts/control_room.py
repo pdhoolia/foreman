@@ -652,19 +652,25 @@ def coordinator_prompts(root: Path, state: dict | None = None) -> list[dict]:
     track's slug, then at most two sentences of the next action."""
     root = root.resolve()
     state = state or collect(root)
-    program = program_file(root)
-    text = (root / program).read_text(encoding="utf-8") if (root / program).is_file() else ""
-    own = next(iter(re.findall(r"`(Coordinate the <slug> track[^`]*)`", text)), None)
     out = []
     for tr in state["tracks"]:
         nxt = None if tr["done"] else next_action(root, state, tr)
         if not nxt:
             continue
-        read = [f for f in (program, "docs/sdlc.md") if (root / f).is_file()] + [tr["path"]]
-        line = own or COORDINATOR_LINE.format(read=", ".join(read[:-1]) + " and " + read[-1] if len(read) > 1 else read[0])
         sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9(])", "Next action in the plan: " + nxt.rstrip(".") + ".")
-        out.append({"slug": tr["slug"], "prompt": line.replace("<slug>", tr["slug"]) + " " + " ".join(sentences[:2])})
+        out.append({"slug": tr["slug"], "prompt": coordinator_line(root, tr) + " " + " ".join(sentences[:2])})
     return out
+
+
+def coordinator_line(root: Path, tr: dict) -> str:
+    """The line that starts a track's coordinator, with its slug filled in: the project's own
+    line from its program file, else COORDINATOR_LINE."""
+    program = program_file(root)
+    text = (root / program).read_text(encoding="utf-8") if (root / program).is_file() else ""
+    own = next(iter(re.findall(r"`(Coordinate the <slug> track[^`]*)`", text)), None)
+    read = [f for f in (program, "docs/sdlc.md") if (root / f).is_file()] + [tr["path"]]
+    line = own or COORDINATOR_LINE.format(read=", ".join(read[:-1]) + " and " + read[-1] if len(read) > 1 else read[0])
+    return line.replace("<slug>", tr["slug"])
 
 
 def open_cards(store: dict | None, task_ids: set[str] | None) -> list[dict]:

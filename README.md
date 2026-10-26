@@ -154,13 +154,29 @@ The page's tests also use `node` when it is installed.
 A coordinator holds no state outside the repository and the control room's store. Any
 session can take its role over from the files.
 
+**Every session has a name**: its intent, then its role. With several windows open, the
+name says which session does what.
+
+| Session | Name | Set by |
+| --- | --- | --- |
+| Program session | `program: <title> (PM)`, the `title` from `foreman.json` | `/rename` in the session (`pm-start`) |
+| Track coordinator | `<slug> (PM)` | `claude --name` (`coordinators`) |
+| Developer | `task <ID>: <short title> (developer)` | `claude --name`, or the Agent tool's description (`dispatch`) |
+| Review pass in its own session | `review #<PR> (reviewer)` | `claude --name` |
+
 **A track coordinator is its own Claude Code session**, never a subagent of the program
 session or of another coordinator. A subagent acts as the session that started it. Its
 review verdicts and ready marks then count as self-approval and are refused, every
 finished PR falls back to the owner's click, its permission prompts go to the other
 session, and the control room looks out of step with what that session says. The
 `coordinators` skill starts each coordinator in a new terminal. When it cannot, it says
-so and prints the prompt the owner pastes into a new session.
+so and prints the prompt the owner pastes into a new session. The skill writes the prompt
+to a file and types only a short command that reads it: a terminal's input line takes at
+most 1024 characters, so a longer typed prompt was cut off and no session started.
+Where `claude --bg` works, the skill starts each coordinator as a background session
+instead, and prints the `claude attach <id>` and `claude logs <id>` lines to reach it.
+The Desktop app is not an option yet: `claude --desktop` takes no prompt and no name, and
+cannot attach to a running background session (tested 2026-10-26 with Claude Code 2.1.310).
 
 **No shortcut that changes who does what.** A session that cannot do a step as written
 here says so and asks the owner. It does not swap in a shortcut that changes who does the

@@ -30,3 +30,7 @@ Argument: `$ARGUMENTS`, the task file (`docs/tracks/<slug>/tasks/<ID>-<name>.md`
    - Who to report to when done or blocked: this session.
 5. **Start the developer** with the `developer` agent (`foreman:developer`) or a new
    session, given the brief. Do not do the task's work yourself.
+   **Name it** `task <ID>: <short title> (developer)`, for example
+   `task B01: search variants (developer)`. In a new terminal, start it with
+   `claude --name "<that name>"`. With the Agent tool, use the same text as the agent's
+   description. A review pass started as its own session is named `review #<PR> (reviewer)`.
