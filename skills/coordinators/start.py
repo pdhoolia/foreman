@@ -5,9 +5,11 @@
     python3 start.py [--root DIR] --track SLUG --next "<one or two sentences>"
 
 For each active track with a next action (as `control_room.py brief program` reads them),
-it opens a new terminal that runs `claude --name "<slug> (PM)" "<the track's prompt>"` at
-the project's root: a new tmux window when this runs inside tmux, else on macOS a new
-Terminal or iTerm2 window through osascript. The prompt goes through a file,
+it starts `claude --name "<slug> (PM)" "<the track's prompt>"` at the project's root: as a
+background session (`claude --bg`) when this claude has it, else in a new tmux window when
+this runs inside tmux, else on macOS in a new Terminal or iTerm2 window through osascript.
+A background session prints a short id; `claude attach <id>` opens it in a terminal and
+`claude logs <id>` shows its recent output. The prompt goes through a file,
 <git common dir>/foreman/prompts/<slug>.txt, because a terminal's input line takes at most
 1024 characters; the typed command only reads that file.
 
@@ -16,7 +18,9 @@ action (a decision reopened it): the coordinator line, then the given sentences.
 terminal automation refused or failed), it prints one line that says so and then each
 prompt left, for the owner to paste into a new session by hand.
 
-FOREMAN_TERMINAL picks the way: `tmux`, `terminal`, `iterm` or `none` (print only).
+FOREMAN_TERMINAL picks the way: `background`, `tmux`, `terminal`, `iterm` or `none` (print
+only). Unset, it is `background` when `claude --help` names `--bg`; if that start is
+refused, the rest go the terminal way.
 It never starts a coordinator inside this session: a subagent would act as this session,
 so its reviews would count as self-review and its permission prompts would come here.
 """
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -33,23 +38,34 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import control_room  # noqa: E402
 
-NAMES = {"tmux": "tmux window", "terminal": "Terminal window", "iterm": "iTerm2 window"}
+NAMES = {"background": "background session", "tmux": "tmux window", "terminal": "Terminal window", "iterm": "iTerm2 window"}
 ITERM = ['on run argv', 'tell application "iTerm"', 'activate', 'set w to (create window with default profile)',
          'tell current session of w to write text (item 1 of argv)', 'end tell', 'end run']
 TERMINAL = ['on run argv', 'tell application "Terminal"', 'activate', 'do script (item 1 of argv)', 'end tell', 'end run']
 
 
-def pick() -> tuple[str | None, str]:
-    """The way to open a terminal, or None and why there is none."""
+def has_bg() -> bool:
+    """Whether this claude can start a background session (`claude --bg`)."""
+    try:
+        r = subprocess.run(["claude", "--help"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "--bg" in r.stdout
+
+
+def pick(background: bool = True) -> tuple[str | None, str]:
+    """The way to start a session, or None and why there is none."""
     way = os.environ.get("FOREMAN_TERMINAL", "").strip().lower()
     if way == "none":
         return None, "FOREMAN_TERMINAL is none"
     if way and way not in NAMES:
-        return None, f"FOREMAN_TERMINAL {way!r} is not tmux, terminal, iterm or none"
+        return None, f"FOREMAN_TERMINAL {way!r} is not background, tmux, terminal, iterm or none"
     if not way and os.environ.get("CLAUDE_CODE_REMOTE"):
         return None, "this is a cloud session, with no terminal to open"
     if not shutil.which("claude"):
         return None, "the claude command is not on PATH"
+    if way == "background" or (not way and background and has_bg()):
+        return "background", ""
     if way == "tmux" or (not way and os.environ.get("TMUX") and shutil.which("tmux")):
         return ("tmux", "") if shutil.which("tmux") else (None, "tmux is not installed")
     if way or sys.platform == "darwin":
@@ -72,25 +88,38 @@ def prompt_file(root: Path, slug: str, prompt: str) -> Path | None:
     return f
 
 
-def start(way: str, root: Path, slug: str, prompt: str) -> str:
-    """Open one terminal; return '' when it opened, else why not."""
+def command(way: str, root: Path, slug: str, f: Path) -> list[str]:
+    """The command that starts one session, reading its prompt from the file f."""
+    run = f'claude --name {shlex.quote(slug + " (PM)")} "$(cat {shlex.quote(str(f))})"'
+    if way == "background":
+        return ["sh", "-c", run.replace("claude ", "claude --bg ", 1)]
+    if way == "tmux":
+        return ["tmux", "new-window", "-c", str(root), "-n", slug, run]
+    script = ITERM if way == "iterm" else TERMINAL
+    return ["osascript", *[a for s in script for a in ("-e", s)], f"cd {shlex.quote(str(root))} && {run}"]
+
+
+def start(way: str, root: Path, slug: str, prompt: str) -> tuple[str, str]:
+    """Start one session; return ('', what to tell the owner) when it started, else (why not, '')."""
     f = prompt_file(root, slug, prompt)
     if f is None:
-        return f"{root} is not a git checkout, so there is no place for the prompt file"
-    run = f'claude --name {shlex.quote(slug + " (PM)")} "$(cat {shlex.quote(str(f))})"'
-    if way == "tmux":
-        cmd = ["tmux", "new-window", "-c", str(root), "-n", slug, run]
-    else:
-        script = ITERM if way == "iterm" else TERMINAL
-        cmd = ["osascript", *[a for s in script for a in ("-e", s)], f"cd {shlex.quote(str(root))} && {run}"]
+        return f"{root} is not a git checkout, so there is no place for the prompt file", ""
+    cmd = command(way, root, slug, f)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return f"{cmd[0]} did not answer ({e.__class__.__name__})"
+        return f"{'claude' if way == 'background' else cmd[0]} did not answer ({e.__class__.__name__})", ""
     if r.returncode:
         err = (r.stderr or r.stdout).strip().splitlines()
-        return f"{cmd[0]} said: {err[-1] if err else 'exit ' + str(r.returncode)}"
-    return ""
+        return f"{'claude --bg' if way == 'background' else cmd[0]} said: {err[-1] if err else 'exit ' + str(r.returncode)}", ""
+    if way != "background":
+        return "", f"Started the {slug} coordinator in a new {NAMES[way]}."
+    m = re.search(r"\b([0-9a-f]{6,})\b", r.stdout)
+    if not m:
+        return "", f"Started the {slug} coordinator in the background; claude said: {r.stdout.strip() or 'nothing'}"
+    return "", (f"Started the {slug} coordinator in the background, id {m.group(1)}.\n"
+                f"  claude attach {m.group(1)}   open it in a terminal\n"
+                f"  claude logs {m.group(1)}     its recent output")
 
 
 def main(argv: list[str]) -> int:
@@ -117,10 +146,14 @@ def main(argv: list[str]) -> int:
     way, why = pick()
     left = prompts
     while way and left:
-        why = start(way, root, left[0]["slug"], left[0]["prompt"])
+        why, said = start(way, root, left[0]["slug"], left[0]["prompt"])
+        if why and way == "background" and not os.environ.get("FOREMAN_TERMINAL", "").strip():
+            way, _ = pick(background=False)  # --bg refused: the rest go the terminal way
+            if way:
+                continue
         if why:
             break
-        print(f"Started the {left[0]['slug']} coordinator in a new {NAMES[way]}.")
+        print(said)
         left = left[1:]
     if left:
         print(f"Could not start {'the coordinator sessions' if len(left) > 1 else 'the coordinator session'} ({why}); "

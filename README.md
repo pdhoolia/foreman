@@ -173,6 +173,10 @@ session, and the control room looks out of step with what that session says. The
 so and prints the prompt the owner pastes into a new session. The skill writes the prompt
 to a file and types only a short command that reads it: a terminal's input line takes at
 most 1024 characters, so a longer typed prompt was cut off and no session started.
+Where `claude --bg` works, the skill starts each coordinator as a background session
+instead, and prints the `claude attach <id>` and `claude logs <id>` lines to reach it.
+The Desktop app is not an option yet: `claude --desktop` takes no prompt and no name, and
+cannot attach to a running background session (tested 2026-10-26 with Claude Code 2.1.310).
 
 **No shortcut that changes who does what.** A session that cannot do a step as written
 here says so and asks the owner. It does not swap in a shortcut that changes who does the

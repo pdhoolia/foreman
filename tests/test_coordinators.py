@@ -211,6 +211,47 @@ class CoordinatorTests(unittest.TestCase):
         self.assertIn('--next needs exactly one --track', self.run_py(START, '--root', '.', '--track', 'old', 'bench', '--next', 'Go.', code=2))
         self.assertIn("no track 'nope'", self.run_py(START, '--root', '.', '--track', 'nope', '--next', 'Go.', code=2))
 
+    def bg_claude(self, refuse=False):
+        """A claude that names --bg in its help, records each start and prints an id (or refuses --bg)."""
+        log = shlex.quote(str(self.bin / 'claude.calls'))
+        (self.bin / 'claude').write_text(
+            '#!/bin/sh\n[ "$1" = --help ] && { echo "  --bg, --background  Start the session in the background"; exit 0; }\n'
+            f'for a in "$@"; do printf "%s\\n" "$a" >> {log}; done\nprintf "%s\\n" "--" >> {log}\n'
+            + ('echo "unknown option --bg" >&2; exit 1\n' if refuse else 'echo "backgrounded · 1a2b3c4d · $3"\n'), encoding='utf-8')
+
+    def test_background_is_the_default_when_claude_has_bg(self):
+        self.bg_claude()
+        stub(self.bin, 'osascript')
+        out = self.start('--track', 'bench')
+        self.assertEqual(out, 'Started the bench coordinator in the background, id 1a2b3c4d.\n'
+                              '  claude attach 1a2b3c4d   open it in a terminal\n'
+                              '  claude logs 1a2b3c4d     its recent output\n')
+        self.assertEqual(calls(self.bin, 'claude'), [['--bg', '--name', 'bench (PM)', BENCH]])
+        self.assertEqual(calls(self.bin, 'osascript'), [])
+
+    def test_a_refused_bg_falls_back_to_a_terminal(self):
+        self.bg_claude(refuse=True)
+        stub(self.bin, 'osascript')
+        out = self.start('--track', 'bench')
+        self.assertEqual(out, 'Started the bench coordinator in a new Terminal window.\n')
+        self.assertEqual(len(calls(self.bin, 'osascript')), 1)
+
+    def test_the_background_command_stays_short_and_names_the_prompt_file(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('foreman_start', START)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.bg_claude()
+        long = ' '.join(['Decision D9 reopened the bench track; plan the next step.'] * 80)[:3600].strip() + '.'
+        self.assertIn('id 1a2b3c4d', self.start('--track', 'bench', '--next', long))
+        f = self.prompt_file('bench')
+        self.assertEqual(calls(self.bin, 'claude')[0][-1], f.read_text(encoding='utf-8'))  # claude got the whole file
+        self.assertGreater(len(f.read_text(encoding="utf-8")), 3800)
+        cmd = mod.command('background', self.proj.resolve(), 'bench', f)
+        self.assertEqual(cmd[:2], ['sh', '-c'])
+        self.assertEqual(cmd[2], f'claude --bg --name {shlex.quote("bench (PM)")} "$(cat {shlex.quote(str(f))})"')
+        self.assertLess(len(cmd[2].encode('utf-8')), 1024)  # whatever the prompt's length: it stays in the file
+
     def test_the_skill_never_starts_a_subagent(self):
         skill = (ROOT / 'skills/coordinators/SKILL.md').read_text(encoding='utf-8')
         self.assertIn('Never start one with the Agent tool', skill)
