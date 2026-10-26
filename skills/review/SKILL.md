@@ -1,6 +1,6 @@
 ---
 name: review
-description: Run the review pass on a developer's pull request before it reaches the owner. Read-only; findings go back to the developer; decides whether the PR may be marked ready.
+description: Run the review pass on a developer's pull request before it reaches the owner. Writes nothing to the branch; findings go back to the developer; posts the verdict comment that lets the PR be marked ready.
 argument-hint: <pull request number or URL>
 ---
 
@@ -27,6 +27,11 @@ change to recovery, contracts or shared state, run this as a separate session wi
 4. Send the findings to the developer, numbered, most serious first, each with what
    would fix it. A finding is a fact about the diff, not a taste.
 5. **Ready gate.** The PR may be marked ready only when no finding is left that blocks
-   it. The ready gate hook ("Hooks" in the README) also refuses the ready mark until
-   `scripts/check.sh` has passed on the head and the task file proposes `done`. Then put
-   it in the owner's digest: one line on what to check. The refresh hook refreshes after the ready mark; publish what it prints.
+   it. When none does, post the verdict as a comment on the PR whose first line is
+   exactly `foreman review: ready <full head sha>` (the sha you reviewed; a later push
+   needs a new verdict):
+   `gh api "repos/{owner}/{repo}/issues/$ARGUMENTS/comments" -f body="foreman review: ready <sha>"`.
+   The ready gate hook ("Hooks" in the README) refuses the ready mark until that comment
+   is there, `scripts/check.sh` has passed on the head and the task file proposes
+   `done`. Then put it in the owner's digest: one line on what to check. The refresh
+   hook refreshes after the ready mark; publish what it prints.

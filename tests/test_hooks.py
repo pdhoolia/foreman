@@ -63,11 +63,11 @@ def env(extra_path=None):
     return e
 
 
-def hook(name, payload, cwd='.', path=None):
+def hook(name, payload, cwd='.', path=None, extra_env=None):
     """Run a hook script with `payload` as its stdin: JSON-encoded, unless it is already a string."""
     run = ['bash'] if name.endswith('.sh') else [sys.executable]
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
-    r = subprocess.run([*run, str(HOOKS / name)], input=stdin, cwd=cwd, env=env(path),
+    r = subprocess.run([*run, str(HOOKS / name)], input=stdin, cwd=cwd, env={**env(path), **(extra_env or {})},
                        capture_output=True, text=True, timeout=120)
     return r
 
@@ -126,8 +126,9 @@ class ScratchRepo(unittest.TestCase):
     def gh_stub(self):
         """A gh that logs each call to self.d/gh-calls and answers from files: a merged question with
         self.d/pr-merged (else false), a pull request search with self.d/pr-number, a pull request read
-        with self.d/pr-head ("<sha> <branch>"). It lists no open pull requests, and fails every call
-        while self.d/gh-fails exists."""
+        with self.d/pr-head ("<sha> <branch>"), a pull request's comments (their first lines) with
+        self.d/pr-comments. It lists no open pull requests, and fails every call while self.d/gh-fails
+        exists."""
         self.bin = self.d / 'bin'
         self.bin.mkdir(exist_ok=True)
         d = self.d
@@ -135,14 +136,19 @@ class ScratchRepo(unittest.TestCase):
                                      f'[ -f "{d}/gh-fails" ] && {{ echo "HTTP 403" >&2; exit 1; }}\n'
                                      f'case "$*" in\n'
                                      f'  *.merged*) cat "{d}/pr-merged" 2>/dev/null || echo false;;\n'
-                                     f'  *"pulls?head="*) cat "{d}/pr-number" 2>/dev/null;;\n'
+                                     f'  *"pulls?head="*) cat "{d}/pr-number" 2>/dev/null || true;;\n'
                                      f'  *pulls/[0-9]*) cat "{d}/pr-head";;\n'
+                                     f'  *issues/[0-9]*/comments*) cat "{d}/pr-comments" 2>/dev/null || true;;\n'
                                      f'esac\n', encoding='utf-8')
         (self.bin / 'gh').chmod(0o755)
 
     def pr_head(self, branch='alice/shelf-model'):
         """Point the stub's pull request at the current tip of `branch`."""
         (self.d / 'pr-head').write_text(f"{self.git('rev-parse', branch)} {branch}\n", encoding='utf-8')
+
+    def reviewed(self, rev='HEAD'):
+        """The coordinator's verdict comment for `rev`, as the stub's comment list."""
+        (self.d / 'pr-comments').write_text(f"Looks fine to me.\nforeman review: ready {self.git('rev-parse', rev)}\n", encoding='utf-8')
 
 
 class StoreShapeTests(unittest.TestCase):
@@ -211,7 +217,7 @@ class StoreShapeTests(unittest.TestCase):
         self.assertIn('must be a list', r.stderr)
 
     def test_unreadable_input_denies(self):
-        for name in ('store_shape.py', 'ready_gate.py', 'branch_name.py', 'task_shape.py'):
+        for name in ('store_shape.py', 'ready_gate.py', 'branch_name.py', 'task_shape.py', 'commit_author.py'):
             for stdin in ('[1]', 'null', 'not json'):
                 with self.subTest(name=name, stdin=stdin):
                     r = hook(name, stdin)
@@ -257,7 +263,33 @@ class ReadyGateTests(ScratchRepo):
         self.assertIn('the checks have not passed', r.stderr)
         self.assertNotIn('has State', r.stderr)
         self.assertEqual(self.check().returncode, 0)
+        r = self.ready()  # no review verdict yet
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('pull request #12 has no review verdict for', r.stderr)
+        self.assertIn(f"foreman review: ready {self.git('rev-parse', 'HEAD')}", r.stderr)
+        self.reviewed('HEAD~1')  # a verdict for another commit does not count
+        r = self.ready()
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('has no review verdict for', r.stderr)
+        self.reviewed()
         self.assertEqual(self.ready().returncode, 0)
+
+    def test_the_verdict_is_the_first_line_of_a_comment(self):
+        self.write({'docs/tracks/shelves/tasks/S01-shelf-model.md': TASK.format(state='done')})
+        self.commit('Propose the shelf model done')
+        self.push()
+        self.pr_head()
+        self.assertEqual(self.check().returncode, 0)
+        sha = self.git('rev-parse', 'HEAD')
+        for lines, code in ((f'foreman review: ready {sha}', 0), (f'foreman review: ready {sha[:12]}', 2),
+                            (f'foreman review: not ready {sha}', 2), (f'a note\nforeman review: ready {sha}', 0)):
+            with self.subTest(lines=lines):
+                (self.d / 'pr-comments').write_text(lines + '\n', encoding='utf-8')
+                self.assertEqual(self.ready().returncode, code)
+        (self.d / 'gh-fails').write_text('', encoding='utf-8')
+        r = self.ready()
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('cannot read', r.stderr)
 
     def test_checks_the_pull_request_being_marked_not_the_checkout(self):
         self.write({'docs/tracks/shelves/tasks/S01-shelf-model.md': TASK.format(state='done')})
@@ -265,13 +297,13 @@ class ReadyGateTests(ScratchRepo):
         self.assertEqual(self.check().returncode, 0)
         self.push()
         self.pr_head()
+        self.reviewed()
         self.git('checkout', '-q', 'main')  # main has no marker and no task file
         self.assertEqual(self.ready().returncode, 0)
         mcp = {'cwd': str(self.repo), 'tool_name': 'mcp__github__update_pull_request', 'tool_input': {'pullNumber': 12, 'draft': False}}
         self.assertEqual(self.ready(mcp).returncode, 0)
-        create = {'cwd': str(self.repo), 'tool_name': 'mcp__github__create_pull_request',
-                  'tool_input': {'head': 'alice/shelf-model', 'base': 'main', 'title': 'Add shelves'}}
-        self.assertEqual(self.ready(create).returncode, 0)
+        (self.d / 'pr-number').write_text('12\n', encoding='utf-8')
+        self.assertEqual(self.ready(bash('gh pr ready alice/shelf-model', self.repo)).returncode, 0)
         (self.d / 'pr-head').write_text(f"{self.git('rev-parse', 'main')} alice/shelf-model\n", encoding='utf-8')
         r = self.ready()  # GitHub's head is another commit: its marker is missing
         self.assertEqual(r.returncode, 2)
@@ -282,14 +314,30 @@ class ReadyGateTests(ScratchRepo):
         r = self.ready()
         self.assertEqual(r.returncode, 2)
         self.assertIn('cannot read pull request #12', r.stderr)
+        (self.d / 'gh-fails').unlink()
         self.write({'docs/tracks/shelves/tasks/S01-shelf-model.md': TASK.format(state='done')})
         self.commit('Propose the shelf model done')  # not pushed
-        r = self.ready(bash('gh pr create --title "Add shelves" --body "Shelves."', self.repo))
+        r = self.ready(bash('gh pr ready', self.repo))
         self.assertEqual(r.returncode, 2)
         self.assertIn("is not what origin has", r.stderr)
         self.assertEqual(self.check().returncode, 0)
         self.push()
-        self.assertEqual(self.ready(bash('gh pr create --title "Add shelves" --body "Shelves."', self.repo)).returncode, 0)
+        self.reviewed()
+        r = self.ready(bash('gh pr ready', self.repo))  # the stub finds no pull request for the branch
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("has no open pull request for 'alice/shelf-model'", r.stderr)
+        (self.d / 'pr-number').write_text('12\n', encoding='utf-8')
+        self.assertEqual(self.ready(bash('gh pr ready', self.repo)).returncode, 0)
+
+    def test_a_new_pull_request_must_be_a_draft(self):
+        for payload in (bash('gh pr create --title "Add shelves" --body "Shelves."', self.repo),
+                        {'cwd': str(self.repo), 'tool_name': 'mcp__github__create_pull_request',
+                         'tool_input': {'head': 'alice/shelf-model', 'base': 'main', 'title': 'Add shelves'}}):
+            with self.subTest(payload=payload):
+                r = self.ready(payload)
+                self.assertEqual(r.returncode, 2)
+                self.assertIn('open it as a draft', r.stderr)
+        self.assertEqual((self.d / 'gh-calls').exists(), False)  # denied before any question to GitHub
 
     def test_a_new_pull_request_is_checked_against_github_not_the_last_fetch(self):
         self.write({'docs/tracks/shelves/tasks/S01-shelf-model.md': TASK.format(state='done')})
@@ -301,13 +349,12 @@ class ReadyGateTests(ScratchRepo):
         (other / 'docs/tracks/shelves/tasks/S01-shelf-model.md').write_text(TASK.format(state='active'), encoding='utf-8')
         self.git('-c', 'commit.gpgsign=false', 'commit', '-q', '-am', 'Reopen the shelf model', cwd=other)
         self.git('push', '-q', 'origin', 'alice/shelf-model', cwd=other)
-        r = self.ready(bash('gh pr create --title "Add shelves" --body "Shelves."', self.repo))
+        (self.d / 'pr-number').write_text('12\n', encoding='utf-8')
+        r = self.ready(bash('gh pr ready alice/shelf-model', self.repo))
         self.assertEqual(r.returncode, 2)
         self.assertIn("is not what origin has", r.stderr)
         self.git('checkout', '-q', 'main')
-        create = {'cwd': str(self.repo), 'tool_name': 'mcp__github__create_pull_request',
-                  'tool_input': {'head': 'alice/shelf-model', 'base': 'main', 'title': 'Add shelves'}}
-        r = self.ready(create)
+        r = self.ready(bash('gh pr ready alice/shelf-model', self.repo))
         self.assertEqual(r.returncode, 2)
         self.assertIn('the checks have not passed', r.stderr)
         self.assertIn("has State 'active'", r.stderr)
@@ -317,10 +364,11 @@ class ReadyGateTests(ScratchRepo):
         self.ready({'cwd': str(self.repo), 'tool_name': 'mcp__github__update_pull_request',
                     'tool_input': {'owner': 'pantry', 'repo': 'other', 'pullNumber': 13, 'draft': False}})
         calls = (self.d / 'gh-calls').read_text(encoding='utf-8')
-        self.assertIn('api repos/pantry/elsewhere/pulls/12', calls)
-        self.assertIn('api repos/pantry/other/pulls/13', calls)
+        self.assertIn('repos/pantry/elsewhere/pulls/12', calls)
+        self.assertIn('repos/pantry/elsewhere/issues/12/comments', calls)
+        self.assertIn('repos/pantry/other/pulls/13', calls)
         self.ready()
-        self.assertIn('api repos/{owner}/{repo}/pulls/12', (self.d / 'gh-calls').read_text(encoding='utf-8'))
+        self.assertIn('repos/{owner}/{repo}/pulls/12', (self.d / 'gh-calls').read_text(encoding='utf-8'))
 
     def test_check_script_marks_only_a_clean_passing_head(self):
         self.write({'fail-checks': ''})
@@ -351,6 +399,7 @@ class ReadyGateTests(ScratchRepo):
         self.commit('Propose the shelf model for review')
         self.push()
         self.pr_head()
+        self.reviewed()
         self.assertEqual(self.ready().returncode, 0)
         (self.repo / 'foreman.json').unlink()
         self.write({'docs/tracks/shelves/tasks/S01-shelf-model.md': TASK.format(state='active')})
@@ -493,6 +542,88 @@ class BranchNameTests(ScratchRepo):
         self.assertEqual(hook('branch_name.py', bash('git commit -m x', self.repo)).returncode, 2)
         (self.repo / 'foreman.json').unlink()
         self.assertEqual(hook('branch_name.py', bash('git commit -m x', self.repo)).returncode, 0)
+
+
+class CommitAuthorTests(ScratchRepo):
+    AGENT = {'GIT_AUTHOR_NAME': 'Claude', 'GIT_AUTHOR_EMAIL': 'noreply@anthropic.com'}
+
+    def commit_hook(self, cmd='git commit -m "Add shelves"', cwd=None, **extra):
+        return hook('commit_author.py', bash(cmd, cwd or self.repo), extra_env=extra)
+
+    def test_denies_an_agent_author_and_passes_the_owner(self):
+        for author in (self.AGENT, {'GIT_AUTHOR_NAME': 'Codex', 'GIT_AUTHOR_EMAIL': 'codex@example.invalid'},
+                       {'GIT_AUTHOR_NAME': 'copilot-swe-agent[bot]', 'GIT_AUTHOR_EMAIL': 'c@example.invalid'},
+                       {'GIT_AUTHOR_NAME': 'bot', 'GIT_AUTHOR_EMAIL': 'bot@example.invalid'},  # a branch_prefixes name
+                       {'GIT_AUTHOR_NAME': 'Alice', 'GIT_AUTHOR_EMAIL': 'alice@mail.anthropic.com'}):
+            with self.subTest(author=author):
+                r = self.commit_hook(**author)
+                self.assertEqual(r.returncode, 2)
+                self.assertIn('the commit rule forbids', r.stderr)
+        # The owner as author with the platform as committer: what a cloud session commits.
+        r = self.commit_hook(GIT_AUTHOR_NAME='alice', GIT_AUTHOR_EMAIL='12345+alice@users.noreply.github.com',
+                             GIT_COMMITTER_NAME='Claude', GIT_COMMITTER_EMAIL='noreply@anthropic.com')
+        self.assertEqual((r.returncode, r.stdout), (0, ''))
+        self.assertEqual(self.commit_hook(GIT_AUTHOR_NAME='Claudette').returncode, 0)
+        self.assertEqual(self.commit_hook('git status', **self.AGENT).returncode, 0)
+
+    def test_the_author_on_the_command_line_wins(self):
+        r = self.commit_hook('git commit -m x --author="Claude <c@example.invalid>"')
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("starts with the harness name 'claude'", r.stderr)
+        self.assertEqual(self.commit_hook('git commit --author "Bob <bob@example.invalid>" -m x', **self.AGENT).returncode, 0)
+        self.assertEqual(self.commit_hook('git -C pantry commit --author=ali -m x', self.d, **self.AGENT).returncode, 0)  # alice's commits
+        r = self.commit_hook('git commit --author=nobody -m x')
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('no commit by that --author', r.stderr)
+
+    def test_the_allow_list(self):
+        self.write({'foreman.json': json.dumps(dict(FOREMAN, commit_authors=['alice <alice@example.invalid>']))})
+        self.assertEqual(self.commit_hook().returncode, 0)
+        r = self.commit_hook(GIT_AUTHOR_NAME='Bob', GIT_AUTHOR_EMAIL='bob@example.invalid')
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("Bob <bob@example.invalid> is not in foreman.json's commit_authors (alice <alice@example.invalid>)", r.stderr)
+        self.write({'foreman.json': json.dumps(dict(FOREMAN, commit_authors=['Claude <noreply@anthropic.com>']))})
+        self.assertEqual(self.commit_hook(**self.AGENT).returncode, 2)  # the deny-list has no switch
+        self.write({'foreman.json': json.dumps(dict(FOREMAN, commit_authors='alice'))})
+        r = self.commit_hook()
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("'commit_authors' must be a list of strings", context_of(r))
+        (self.repo / 'foreman.json').unlink()
+        self.assertEqual(self.commit_hook(**self.AGENT).returncode, 0)  # not a foreman project
+
+    def start(self, **extra):
+        """The SessionStart hook, outside a cloud session unless `extra` says otherwise."""
+        e = {'CLAUDE_CODE_REMOTE': '', 'CLAUDE_ENV_FILE': '', **extra}
+        return hook('commit_author.py', {'hook_event_name': 'SessionStart', 'cwd': str(self.repo), 'source': 'startup'}, extra_env=e)
+
+    def test_session_start_sets_one_listed_author(self):
+        self.write({'foreman.json': json.dumps(dict(FOREMAN, commit_authors=['alice <12345+alice@users.noreply.github.com>']))})
+        env_file = self.d / 'claude-env'
+        r = self.start(CLAUDE_ENV_FILE=str(env_file))  # not a cloud session: no committer export
+        self.assertIn('authored as alice <12345+alice@users.noreply.github.com>', context_of(r))
+        self.assertNotIn('committer', context_of(r))
+        self.assertFalse(env_file.exists())
+        self.assertEqual((self.git('config', 'user.name'), self.git('config', 'user.email')), ('alice', '12345+alice@users.noreply.github.com'))
+        r = self.start(CLAUDE_ENV_FILE=str(env_file), CLAUDE_CODE_REMOTE='true')
+        self.assertIn('The committer stays Claude <noreply@anthropic.com>', context_of(r))
+        self.assertEqual(env_file.read_text(encoding='utf-8'), 'export GIT_COMMITTER_NAME=Claude\nexport GIT_COMMITTER_EMAIL=noreply@anthropic.com\n')
+        e = {k: v for k, v in env().items() if not k.startswith('GIT_')}  # what the Bash tool then sees
+        e.update({'GIT_COMMITTER_NAME': 'Claude', 'GIT_COMMITTER_EMAIL': 'noreply@anthropic.com'})
+        self.assertEqual(subprocess.run(['git', 'var', 'GIT_AUTHOR_IDENT'], cwd=self.repo, env=e, capture_output=True, text=True).stdout.split(' <')[0], 'alice')
+        self.assertEqual(subprocess.run(['git', 'var', 'GIT_COMMITTER_IDENT'], cwd=self.repo, env=e, capture_output=True, text=True).stdout.split(' <')[0], 'Claude')
+
+    def test_session_start_without_one_author_says_the_commands(self):
+        for conf in (FOREMAN, dict(FOREMAN, commit_authors=['alice <a@example.invalid>', 'bob <b@example.invalid>']),
+                     dict(FOREMAN, commit_authors=['alice'])):
+            with self.subTest(conf=conf):
+                self.write({'foreman.json': json.dumps(conf)})
+                text = context_of(self.start(CLAUDE_CODE_REMOTE='true', CLAUDE_ENV_FILE=str(self.d / 'claude-env')))
+                self.assertIn('does not name exactly one commit author', text)
+                self.assertIn("git config user.name '<name>' && git config user.email '<email>'", text)
+        self.assertEqual(self.git('config', 'user.name'), 'alice')  # the scratch repository's own setting, untouched
+        self.assertFalse((self.d / 'claude-env').exists())
+        (self.repo / 'foreman.json').unlink()
+        self.assertEqual(self.start().stdout, '')
 
 
 class TaskShapeTests(ScratchRepo):
@@ -640,7 +771,7 @@ class WiringTests(unittest.TestCase):
         wired = json.dumps(json.loads((HOOKS / 'hooks.json').read_text(encoding='utf-8')))
         scripts = {p.name for p in HOOKS.iterdir() if p.suffix in ('.py', '.sh') and p.name != 'common.py'}
         self.assertEqual({s for s in scripts if s in wired}, scripts)
-        self.assertEqual(len(scripts), 8)
+        self.assertEqual(len(scripts), 9)
 
 
 if __name__ == '__main__':
